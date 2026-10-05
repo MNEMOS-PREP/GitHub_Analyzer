@@ -1,60 +1,86 @@
-# M03: GitHub analyzer
+<div align="center">
 
-Reads a student's repository and answers three questions without ever giving a verdict:
+# M03 · GitHub Analyzer
 
-1. **What is in it?** Lines of code excluding vendored, generated and binary files; the stack; tests, CI, Docker.
-2. **How much of it did the student write?** A *range* from two independent methods, with the method stated. If the history
-   is squashed it says "I can't tell from this history" and gives no number.
-3. **What could we ask about?** Up to 12 decisions found in the code (a threshold, a hyperparameter, a bare `except`, a
-   schema, a cache), each with a `file:line` citation, a four-step question ladder and a gentle fallback.
+**Turns a student's repository into interview questions about their own code.**
+*It never gives a verdict.*
 
-Nothing in the repository is ever executed. No model is used. No student-facing text contains words like *plagiarism*,
-*copied* or *original*, and a committed secret is reported only as a private "rotate it" notice.
+![python](https://img.shields.io/badge/python-3.12-blue) ![tests](https://img.shields.io/badge/tests-136%20passing-brightgreen) ![executes repo code](https://img.shields.io/badge/executes%20repo%20code-never-success) ![model](https://img.shields.io/badge/model%20used-none-lightgrey)
 
-## Run it
+</div>
+
+---
+
+## What it does
+
+| Question | Answer |
+|---|---|
+| **What is in it?** | Lines of code (minus vendored, generated and binary files), stack, tests, CI, Docker |
+| **How much did they write?** | A *range* from two methods, with the method stated. Squashed history gives "I can't tell", never a made-up number |
+| **What can we ask about?** | Up to 12 decisions (a threshold, a hyperparameter, a bare `except`, a schema, a cache), each with a `file:line` citation, a four-step question ladder and a gentle fallback |
+
+### Guarantees
+
+- Repository code is **never executed**, and no model is used.
+- A bad or missing repo **never changes a score**.
+- No student-facing text says *plagiarism*, *copied* or *original*.
+- A committed secret appears only as a private "rotate it" notice.
+
+---
+
+## Quick start
 
 ```bash
-pip install pytest
-pip install -r requirements.txt          # tree-sitter grammars are optional; without them non-Python code gets regex checks only
-python -m pytest -q                      # 133 pass, 1 skipped; about 2 minutes (many tests build real git repositories)
-python -m gh_analyzer C:/path/to/repo --me you@example.com your-name --md out.md --json out.json
-python -m gh_analyzer owner/name --me you@example.com      # clones with git (needs network); a fork is detected and only your additions counted
-python -m gh_analyzer <repo> --reference corpus.json       # set aside code that matches reference material (see below)
+pip install -r requirements.txt
+python -m gh_analyzer <folder | owner/name | github link> --me you@example.com --md out.md --json out.json
 ```
 
-Without `--me`, it lists the identities in the history ("are these commits yours?") and computes nothing about you.
+| Option | Effect |
+|---|---|
+| `--me <emails or names>` | Which commits are yours. Without it, identities are listed and no share is computed |
+| `--keywords <words>` | Resume terms; decisions that mention them rank higher |
+| `--fork-of owner/name` | Parent repo, if it can't be found automatically |
+| `--reference corpus.json` | Set aside code that matches reference material (tutorials, templates) |
 
-## Layout
+Run the tests with `python -m pytest -q` (about 2 minutes; many build real git repositories).
+
+---
+
+## How it works
 
 ```
-gh_analyzer/
-  snapshot.py      safe access to a repo, history export, caps, symlink and file-count checks
-  inventory.py     what is in the repo, minus the world
-  contribution.py  share range, cadence, squashed-history and shallow-clone handling
-  secrets.py       find, redact, report privately
-  decisions.py     twelve kinds of decision (Python by AST)
-  ts_detect.py    the same decisions for JavaScript, TypeScript, Java and Go, read with tree-sitter
-  modgraph.py     import graph (centrality) for JavaScript, TypeScript, Java and Go
-  forks.py         fork detection: count only what was added on top of the parent
-  reference.py     MinHash match against a reference corpus; only ever removes questions, never shown
-  ranking.py       interest score, authored-confidence, selection rules
-  questions.py     question ladder, citation check, wording check
-  selection.py     which of a student's repos to use; the no-repo path
-  pipeline.py      everything together; student-facing and private output kept apart
-docs/M03_ALGORITHMS.md   every number, where it came from, and how good the detectors are
-results/                 saved real runs (see results/README.txt for which code version made each)
-tests/                   unit, end-to-end and safety-gate tests
+snapshot  →  inventory  →  contribution  →  decisions  →  ranking  →  questions
 ```
 
-## What is true and what is not
+| Stage | File |
+|---|---|
+| Safe access, history export, size and symlink checks | `snapshot.py` |
+| Files, languages, stack | `inventory.py` |
+| Share range, cadence, squashed and shallow history | `contribution.py` |
+| Fork handling: count only what was added on top of the parent | `forks.py` |
+| Committed secrets: find, redact, report privately | `secrets.py` |
+| Decisions: Python by `ast`; JS, TS, Java, Go by tree-sitter | `decisions.py`, `ts_detect.py` |
+| Import graph (centrality) | `ranking.py`, `modgraph.py` |
+| Reference matching (only ever removes questions) | `reference.py` |
+| Ranking, question ladder, citation and wording checks | `ranking.py`, `questions.py` |
+| Repo selection and the no-repo path | `selection.py` |
+| Everything together; student and private output kept apart | `pipeline.py` |
 
-* The pipeline runs on real repositories (checked on thirteen here) and on synthetic ones with known authorship.
-* **No number has been validated against human judgement.** Detector precision was judged by one rater, the author: about
-  half to two-thirds of the decisions it picks are ones an interviewer would sensibly ask about, and 6–10% are wrong
-  (see `docs/M03_ALGORITHMS.md`).
-* One test is skipped on Windows: the refusal of a symlink that points outside the repository needs symlink permission, which this machine lacks. The check is written but has not been exercised here.
-* Python is read with `ast`; JavaScript, TypeScript, Java and Go with tree-sitter (if installed). Other languages, and these four without the grammars, get a short list of regex checks, and the output says so. The tree-sitter detectors have **not** been through a precision audit yet.
-* Built but unmeasured: fork detection (needs the GitHub API or an `upstream` remote; never fetches into a repository on your disk) and reference matching (no corpus ships, so it does nothing until one is built).
-* Not built: the model-written summary, the GitHub login, the service and database layer. The full list is in the algorithms document.
-* `repo-agent/` next to this folder is a different thing: an agent that judges whether a repository is safe to adopt.
-  M03 is about the student's own code, and does not judge.
+Every number and where it came from: [docs/M03_ALGORITHMS.md](docs/M03_ALGORITHMS.md)
+
+---
+
+## Status
+
+| | |
+|---|---|
+| **Built** | Everything above, with 136 tests passing |
+| **Not validated** | No number has been checked against human judgement. One rater (the author) judged the Python detectors: about half to two-thirds of the decisions chosen are worth asking, and 6–10% are wrong. The tree-sitter detectors, fork detection and reference matching are unmeasured |
+| **Not built** | GitHub login, the service and database layer, the model-written summary, scaffold detection, the "explain your own code" gate |
+| **Known limits** | Other languages (and the four above without the grammars) get a short list of regex checks, and the output says so. One test is skipped on Windows because it needs symlink permission |
+
+> Reference matching ships **without a corpus**, so it does nothing until you build one:
+>
+> ```bash
+> python -m gh_analyzer.reference build <folder of reference code> -o corpus.json
+> ```
