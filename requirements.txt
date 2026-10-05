@@ -1,0 +1,8 @@
+# Optional. Without these the analyzer still runs; JavaScript, TypeScript, Java and Go fall back to a short regex list.
+tree-sitter>=0.25
+tree-sitter-javascript
+tree-sitter-typescript
+tree-sitter-java
+tree-sitter-go
+# Tests
+pytest
