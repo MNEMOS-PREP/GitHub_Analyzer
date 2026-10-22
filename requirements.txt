@@ -4,5 +4,9 @@ tree-sitter-javascript
 tree-sitter-typescript
 tree-sitter-java
 tree-sitter-go
+# The HTTP service (api.py). The command-line tool does not need these.
+fastapi>=0.110
+uvicorn>=0.29
 # Tests
 pytest
+httpx

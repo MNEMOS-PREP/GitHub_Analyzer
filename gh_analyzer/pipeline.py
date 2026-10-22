@@ -12,9 +12,11 @@ Reference matching (reference.py) runs only when a corpus is supplied; without o
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
-from . import contribution, decisions, forks, inventory, questions, ranking, reference, secrets, selection, snapshot, ts_detect
+from . import (contribution, decisions, forks, inventory, no_repo, questions, ranking, reference, resume_link, secrets,
+               selection, snapshot, ts_detect)
 
 CONFIG_SCAN = (".env", ".json", ".yml", ".yaml", ".cfg", ".ini", ".toml", ".properties", ".txt")
 ENTRY_NAMES = {"main.py", "app.py", "server.py", "manage.py", "run.py", "wsgi.py", "asgi.py", "index.js", "server.js",
@@ -50,88 +52,133 @@ def understanding(inv: inventory.Inventory) -> dict:
             "needs_confirmation": True}
 
 
+class _Stages:
+    """Wall-clock per stage (FR-3.17), plus an optional progress callback for the SSE stream."""
+
+    def __init__(self, progress=None):
+        self.timings: dict[str, float] = {}
+        self._progress = progress
+        self._t = time.perf_counter()
+
+    def done(self, stage: str) -> None:
+        now = time.perf_counter()
+        self.timings[stage] = round(now - self._t, 3)
+        self._t = now
+        if self._progress:
+            self._progress(stage)
+
+
 def analyse_repo(target: str, me: list[str] | None = None, resume_keywords: list[str] | None = None,
-                 workdir: str | None = None, fork_of: str | None = None, reference_corpus: str | None = None) -> dict:
+                 workdir: str | None = None, fork_of: str | None = None, reference_corpus: str | None = None,
+                 resume_claims: list[dict] | None = None, progress=None) -> dict:
     try:
         snap = snapshot.snapshot(target, workdir)
     except snapshot.EmptyRepo as exc:
-        return {"student": {"status": "empty", "message": str(exc), "no_repo_path": selection.NO_REPO}, "private": {}}
+        return empty_result(str(exc))
     try:
-        root = snap.root
-        log = snapshot.export_log(root)
-        inv = inventory.scan(root)
-        mine = [m.lower() for m in (me or [])]
-        fork = forks.detect(root, snap.repo, snap.source, fork_of)
-        upstream = fork.upstream_shas if fork.usable else None
-        contrib = contribution.analyse(log, inv.analysed, root, mine or None, upstream)
-        own_log = [c for c in log if c.sha not in upstream] if upstream else log
-        blame = None
-        if mine and contrib.history_usable and contrib.candidate_commits:
-            blame = contribution.blame_lines_by_file(root, inv.analysed, set(mine))
-        found = decisions.detect_repo(root, inv.analysed)
-        corpus = reference.default_corpus(reference_corpus)
-        found = ranking.score(found, root, inv.analysed, blame, resume_keywords, corpus)
-        top = ranking.select_top(found)
-        qs, skipped = questions.questions_for(top, root)
-        qs_ok = {q.decision_id for q in qs}
-        top = [d for d in top if d.id in qs_ok]
-        secret_hits = secrets.scan_files(root, _secret_scan_paths(root, inv.analysed))
-
-        notes = list(snap.notes) + fork.notes + contrib.notes
-        if not top:
-            notes.append("This repository is mostly configuration or has few decisions I can read. I will ask design questions instead.")
-        elif len(top) < 5:
-            notes.append("I found fewer than five decisions here, so the round will add questions from your resume.")
-        kinds_total = {}
-        for d in found:
-            kinds_total[d.kind] = kinds_total.get(d.kind, 0) + 1
-        parsed = {"Python"} | ({"JavaScript", "TypeScript", "Java", "Go"} if ts_detect.available() else set())
-        non_py = [lang for lang in inv.languages if lang not in parsed | {"Jupyter", "HTML", "CSS", "SQL", "Shell"}]
-        if non_py:
-            notes.append("I read " + ", ".join(non_py) + " with reduced depth (a short list of checks, not a full parse).")
-        if "Jupyter" in inv.languages:
-            notes.append("Notebook code counts toward line totals but I did not look for decisions inside notebooks.")
-
-        result = {
-            "student": {
-                "status": "ok",
-                "repo": snap.repo,
-                "pinned_sha": snap.sha[:12],
-                "understanding": understanding(inv),
-                "inventory": {k: v for k, v in inv.to_dict().items() if k in (
-                    "total_files", "analysed_files", "excluded_files", "loc_total", "languages", "frameworks",
-                    "has_tests", "test_loc", "has_ci", "has_dockerfile", "has_readme", "licence")},
-                "fork": None if not fork.is_fork else {
-                    **fork.to_dict(),
-                    "statement": forks.statement(fork, sum(a for c in own_log for a, _, p in c.files if inventory.is_code(p)
-                                                           and not inventory.path_excluded(p)), len(own_log)) if fork.usable else None},
-                "contribution": {
-                    "statement": contribution.describe(contrib),
-                    "history_usable": contrib.history_usable,
-                    "range": None if contrib.share_low is None else [contrib.share_low, contrib.share_high],
-                    "cadence": contrib.cadence,
-                    "active_days": contrib.active_days,
-                    "span_days": contrib.span_days,
-                    "primary_areas": contrib.primary_areas,
-                    "other_contributors": contrib.other_contributors,
-                    "identity_candidates": contribution.identity_candidates(own_log) if not mine else [],
-                },
-                "decisions": [{k: v for k, v in d.to_dict().items() if k in (
-                    "id", "path", "line_start", "line_end", "snippet", "kind", "summary", "interest_score", "detector")} for d in top],
-                "questions": [q.to_dict() for q in qs],
-                "notes": notes,
-            },
-            "private": {
-                "secret_notices": [s.notice() for s in secret_hits],
-                "audit": {"skipped_decisions": skipped, "decisions_found_by_kind": kinds_total,
-                          "decisions_set_aside_for_reference": sum(1 for d in found if d.reference_match),
-                          "exclusion_reasons": inv.exclusion_reasons, "blame_share": contrib.blame_share,
-                          "additions_share": contrib.additions_share, "shallow": snap.shallow},
-            },
-        }
-        return result
+        return analyse_snapshot(snap, me, resume_keywords, fork_of, reference_corpus, resume_claims, progress)
     finally:
         snap.cleanup()
+
+
+def empty_result(message: str) -> dict:
+    return {"student": {"status": "empty", "message": message, "no_repo_path": selection.NO_REPO,
+                        "project_round": no_repo.project_round([])}, "private": {}}
+
+
+def analyse_snapshot(snap: snapshot.Snapshot, me: list[str] | None = None, resume_keywords: list[str] | None = None,
+                     fork_of: str | None = None, reference_corpus: str | None = None,
+                     resume_claims: list[dict] | None = None, progress=None) -> dict:
+    """Analyse a snapshot that is already on disk. The caller owns it, so it can be re-read (identity confirmation,
+    the explain gate) without cloning again, and it stays pinned to one SHA."""
+    stages = _Stages(progress)
+    root = snap.root
+    log = snapshot.export_log(root)
+    stages.done("snapshot")
+    inv = inventory.scan(root)
+    stages.done("inventory")
+    mine = [m.lower() for m in (me or [])]
+    fork = forks.detect(root, snap.repo, snap.source, fork_of)
+    upstream = fork.upstream_shas if fork.usable else None
+    contrib = contribution.analyse(log, inv.analysed, root, mine or None, upstream)
+    own_log = [c for c in log if c.sha not in upstream] if upstream else log
+    blame = None
+    if mine and contrib.history_usable and contrib.candidate_commits:
+        blame = contribution.blame_lines_by_file(root, inv.analysed, set(mine))
+    stages.done("contribution")
+    found = decisions.detect_repo(root, inv.analysed)
+    stages.done("decisions")
+    corpus = reference.default_corpus(reference_corpus)
+    found = ranking.score(found, root, inv.analysed, blame, resume_keywords, corpus)
+    top = ranking.select_top(found)
+    qs, skipped = questions.questions_for(top, root)
+    qs_ok = {q.decision_id for q in qs}
+    top = [d for d in top if d.id in qs_ok]
+    stages.done("questions")
+    secret_hits = secrets.scan_files(root, _secret_scan_paths(root, inv.analysed))
+    stages.done("secrets")
+
+    notes = list(snap.notes) + fork.notes + contrib.notes
+    extra_questions: list[dict] = []
+    if len(top) < 5:
+        # FR-3.10 / section 10: fewer than five decisions is not a failure; the round is topped up, never shortened.
+        extra_questions = no_repo.supplement(resume_claims or [], inv, needed=5 - len(top))
+        notes.append("This repository is mostly configuration or has few decisions I can read. I will ask design questions instead."
+                     if not top else
+                     "I found fewer than five decisions here, so the round will add questions from your resume.")
+    kinds_total = {}
+    for d in found:
+        kinds_total[d.kind] = kinds_total.get(d.kind, 0) + 1
+    parsed = {"Python"} | ({"JavaScript", "TypeScript", "Java", "Go"} if ts_detect.available() else set())
+    non_py = [lang for lang in inv.languages if lang not in parsed | {"Jupyter", "HTML", "CSS", "SQL", "Shell"}]
+    if non_py:
+        notes.append("I read " + ", ".join(non_py) + " with reduced depth (a short list of checks, not a full parse).")
+    if "Jupyter" in inv.languages:
+        notes.append("Notebook code counts toward line totals but I did not look for decisions inside notebooks.")
+
+    result = {
+        "student": {
+            "status": "ok",
+            "repo": snap.repo,
+            "pinned_sha": snap.sha[:12],
+            "understanding": understanding(inv),
+            "inventory": {k: v for k, v in inv.to_dict().items() if k in (
+                "total_files", "analysed_files", "excluded_files", "loc_total", "languages", "frameworks",
+                "has_tests", "test_loc", "has_ci", "has_dockerfile", "has_readme", "licence")},
+            "fork": None if not fork.is_fork else {
+                **fork.to_dict(),
+                "statement": forks.statement(fork, sum(a for c in own_log for a, _, p in c.files if inventory.is_code(p)
+                                                       and not inventory.path_excluded(p)), len(own_log)) if fork.usable else None},
+            "contribution": {
+                "statement": contribution.describe(contrib),
+                "history_usable": contrib.history_usable,
+                "range": None if contrib.share_low is None else [contrib.share_low, contrib.share_high],
+                "cadence": contrib.cadence,
+                "active_days": contrib.active_days,
+                "span_days": contrib.span_days,
+                "primary_areas": contrib.primary_areas,
+                "other_contributors": contrib.other_contributors,
+                "identity_candidates": contribution.identity_candidates(own_log) if not mine else [],
+            },
+            "decisions": [{k: v for k, v in d.to_dict().items() if k in (
+                "id", "path", "line_start", "line_end", "snippet", "kind", "summary", "interest_score", "detector")} for d in top],
+            "questions": [q.to_dict() for q in qs],
+            "supplementary_questions": extra_questions,
+            "resume_links": resume_link.link(resume_claims or [], snap.repo, inv, top),
+            "notes": notes,
+        },
+        "private": {
+            "secret_notices": [s.notice() for s in secret_hits],
+            "audit": {"skipped_decisions": skipped, "decisions_found_by_kind": kinds_total,
+                      "decisions_set_aside_for_reference": sum(1 for d in found if d.reference_match),
+                      "exclusion_reasons": inv.exclusion_reasons, "blame_share": contrib.blame_share,
+                      "additions_share": contrib.additions_share, "shallow": snap.shallow,
+                      "timings_s": {**stages.timings, "total": round(sum(stages.timings.values()), 3)}},
+        },
+    }
+    stages.done("assemble")
+    return result
+
 
 
 def render_markdown(result: dict) -> str:
