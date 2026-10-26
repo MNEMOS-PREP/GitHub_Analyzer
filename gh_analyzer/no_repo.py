@@ -53,9 +53,11 @@ def _question(text: str, depth: int, project: str, expects: list[str], fallback:
             "fallback_if_unanswered": fallback, "project": project, "kind": "design", "affects_score": False}
 
 
-def _safe(qs: list[dict]) -> list[dict]:
-    """Drop (never rewrite silently) anything that trips the wording check."""
-    return [q for q in qs if not copy_violations(q["question"] + " " + q["fallback_if_unanswered"])]
+def _safe(qs: list[dict], own: list[str]) -> list[dict]:
+    """Drop (never rewrite silently) anything that trips the wording check. `own`: the project's title and the tech
+    the student named are their words, not ours — checked, they dropped every question about a "Fake News Detection"
+    project, the round meant for when nothing else can be asked."""
+    return [q for q in qs if not copy_violations(q["question"] + " " + q["fallback_if_unanswered"], own)]
 
 
 def project_round(projects: list[dict], max_projects: int = 3) -> dict:
@@ -70,11 +72,13 @@ def project_round(projects: list[dict], max_projects: int = 3) -> dict:
     for p in named:
         name = _clean(_title(p))
         fb = DESIGN_FALLBACK.format(project=name)
+        mine: list[dict] = []
         for depth, tmpl in enumerate(DESIGN_LADDER):
-            qs.append(_question(tmpl.format(project=name), depth, name, DESIGN_EXPECTS[depth], fb))
-        for tech in (p.get("tech") or [])[:2]:
-            qs.append(_question(TECH_PROBE.format(tech=tech, project=name), 1, name, ["alternatives", "trade-offs"], fb))
-    qs = _safe(qs)
+            mine.append(_question(tmpl.format(project=name), depth, name, DESIGN_EXPECTS[depth], fb))
+        techs = [str(t) for t in (p.get("tech") or [])[:2]]
+        for tech in techs:
+            mine.append(_question(TECH_PROBE.format(tech=tech, project=name), 1, name, ["alternatives", "trade-offs"], fb))
+        qs += _safe(mine, [name, *techs])
     return {"mode": "no_repo", "professor_style": True, "generic": generic, "affects_score": False,
             "projects": [_clean(_title(p)) for p in named], "questions": qs,
             "starter_builds": STARTER_BUILDS}

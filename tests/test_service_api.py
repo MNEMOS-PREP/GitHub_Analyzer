@@ -210,3 +210,16 @@ def test_the_api_fails_closed_if_a_payload_would_carry_a_forbidden_key():
     with pytest.raises(guard.LeakError):
         guard.assert_clean({"questions": [{"question": "Is this original work?"}]})
     guard.assert_clean({"decisions": [{"snippet": "original = load()"}]})          # the student's own code is not policed for words
+
+
+def test_the_students_own_words_in_our_wording_are_not_a_verdict():
+    """Their function, file, code, project and link are theirs; the wording around them is still checked."""
+    code = "def authenticate_user(u):\n    return u.original_name"
+    gate = {"read_aloud": "Function authenticate_user, in auth/login.py, lines 3 to 4. " + code.replace("\n", ". "),
+            "function": "authenticate_user", "path": "auth/login.py", "code": code}
+    assert guard.problems(gate) == []
+    assert guard.problems({"student": {"message": "Could not clone github.com/asha/fake-news-detector: not found"}}) == []
+    named = {"questions": [{"question": "Walk me through Fake News Detection.", "project": "Fake News Detection"}]}
+    assert guard.problems(named) == []
+    assert guard.problems({"question": "Is Fake News Detection original work?", "project": "Fake News Detection"})
+    assert guard.problems({"message": "We doubt its authenticity."})

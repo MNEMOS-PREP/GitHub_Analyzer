@@ -264,3 +264,14 @@ def test_the_command_line_works_and_reports_bad_targets_politely(tmp_repo):
     assert ok.returncode == 0 and "things I could ask you about" in ok.stdout and "PRIVATE:" in ok.stdout
     bad = subprocess.run([sys.executable, "-m", "gh_analyzer", "https://gist.github.com/x/y"], cwd=ROOT, capture_output=True, text=True)
     assert bad.returncode == 2 and "gist" in bad.stdout.lower()
+
+
+def test_a_decision_in_the_login_code_is_asked_about(tmp_path):
+    """`authentic` is banned; authentication is not. Every auth module's decisions were being skipped."""
+    from gh_analyzer.decisions import Decision
+    (tmp_path / "auth").mkdir()
+    (tmp_path / "auth" / "authentication.py").write_text("max_attempts = 5\n")
+    d = Decision("auth/authentication.py:1:hyperparameter", "auth/authentication.py", 1, 1, "max_attempts = 5",
+                 "hyperparameter", "x", {"name": "max_attempts", "value": "5"}, [], "ast")
+    qs, skipped = questions.questions_for([d], tmp_path)
+    assert skipped == [] and "auth/authentication.py:1" in qs[0].question

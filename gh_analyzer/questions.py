@@ -21,7 +21,9 @@ from pathlib import Path
 
 from .decisions import Decision
 
-BANNED = re.compile(r"(plagiar|copied|copying|fake|authentic|original|cheat|suspicious|fraud)", re.I)
+# `authentic` but not authenticate / authentication / authenticated: a question about the login code
+# is not a word about the student (every auth module's decisions were skipped).
+BANNED = re.compile(r"(plagiar|copied|copying|fake|authentic(?!at)|original|cheat|suspicious|fraud)", re.I)
 
 LADDER: dict[str, list[str]] = {
     "hyperparameter": [
@@ -152,7 +154,11 @@ class _Safe(dict):
         return "that"
 
 
-def copy_violations(text: str) -> list[str]:
+def copy_violations(text: str, own: tuple[str, ...] | list[str] = ()) -> list[str]:
+    """Banned words in OUR wording. `own`: the student's own words in it (their project's title, the tech they
+    named), taken out first: a project called "Fake News Detection" said back to its author is not a verdict."""
+    for piece in sorted((p for p in own if p), key=len, reverse=True):
+        text = text.replace(piece, " ")
     return sorted({m.group(0).lower() for m in BANNED.finditer(text)})
 
 

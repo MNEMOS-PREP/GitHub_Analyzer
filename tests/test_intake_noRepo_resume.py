@@ -230,3 +230,11 @@ def test_AC_3_3_nothing_in_the_package_can_execute_repository_code():
         text = f.read_text(encoding="utf-8")
         if "subprocess" in text:
             assert f.name in {"snapshot.py"}, f.name
+
+
+def test_a_project_titled_with_a_banned_word_still_gets_its_round():
+    """The no-repo round is the one that must never come back empty, and "Fake News Detection" is the student's title."""
+    r = no_repo.project_round([{"title": "Fake News Detection", "tech": ["LSTM"]}])
+    assert len(r["questions"]) >= 4
+    assert any("Fake News Detection" in q["question"] for q in r["questions"])
+    assert guard.problems(r) == []
