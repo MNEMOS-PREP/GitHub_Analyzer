@@ -13,11 +13,26 @@ Task list for taking **M3 — GitHub Analyzer & Authorship Forensics** to 100% o
 > code existed. Do not let that happen again.)
 
 - **Repo:** `GitHub_Analyzer`
-- **Tests:** `python -m pytest -q` — 174 passed, 1 skipped (a symlink test that needs Windows permission), about 3 minutes.
+- **Tests:** `python -m pytest -q` — 177 passed, 1 skipped (a symlink test that needs Windows permission), about 3 minutes.
 
 Legend: ✅ done · 🟡 partly done · ⬜ not started
 
 ---
+
+### 2026-10-26 — on `todo`, reviewed, and the wording check fixed (`229e004`)
+
+abhinav's `m03-complete` (7b4709f, 1142826) is fast-forwarded onto `todo`, the
+module's default branch, after review. One defect, found and fixed: the copy
+rule was matched as substrings over whole strings, so it judged the student's
+own text. `authentic` matched *authentication* — every decision in a login
+module was skipped, and an explain gate over `def authenticate_user` put the
+code in `read_aloud`, where the guard failed closed (a 500); a "Fake News
+Detection" project got an empty no-repo round; a repository that could not be
+cloned 500'd with its URL in the message. Now `authentic` is matched but not
+*authenticat-*, the project's title and named tech are the student's, and the
+guard takes the student's pieces (code, function, path, citation, project,
+links) out of our wording before it checks. A decision whose own name carries a
+banned word is still skipped, as designed. +3 tests.
 
 ## 0. Ideas and scouting
 
