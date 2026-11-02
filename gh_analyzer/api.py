@@ -19,7 +19,8 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import guard, identity, intake, snapshot
+from . import coding_profiles, guard, identity, intake, snapshot
+from .coding_profiles import CodingProfiles
 from .service import AnalyzerService, NotFound, Record
 
 
@@ -45,6 +46,13 @@ class GateRating(BaseModel):
     useful: bool
 
 
+class Handles(BaseModel):
+    """A bare username or a pasted profile link. Leave a platform out to keep it; send an empty string to unlink it."""
+    codeforces: str | None = None
+    leetcode: str | None = None
+    codechef: str | None = None
+
+
 def _ok(payload, status: int = 200) -> JSONResponse:
     try:
         guard.assert_clean(payload)
@@ -62,8 +70,10 @@ _STATUS = {"private_or_missing": 404, "rate_limited": 503, "unreachable": 502, "
 
 
 def create_app(service: AnalyzerService | None = None, client_id: str | None = None, client_secret: str | None = None,
-               redirect_uri: str | None = None, client_factory=intake.GitHubClient) -> FastAPI:
+               redirect_uri: str | None = None, client_factory=intake.GitHubClient,
+               profiles: CodingProfiles | None = None) -> FastAPI:
     svc = service or AnalyzerService(os.environ.get("GHA_STORAGE", "gha_storage"))
+    book = profiles or CodingProfiles()
     client_id = client_id or os.environ.get("GITHUB_CLIENT_ID")
     client_secret = client_secret or os.environ.get("GITHUB_CLIENT_SECRET")
     redirect_uri = redirect_uri or os.environ.get("GITHUB_REDIRECT_URI")
@@ -98,6 +108,16 @@ def create_app(service: AnalyzerService | None = None, client_id: str | None = N
     @app.exception_handler(identity.IdentityError)
     async def _identity_error(_: Request, exc: identity.IdentityError):
         return _err(400, "identity", str(exc))
+
+    @app.exception_handler(coding_profiles.ProfileError)
+    async def _profile_error(_: Request, exc: coding_profiles.ProfileError):
+        return _err(404 if exc.code == "not_found" else 502 if exc.code in ("unreachable", "unavailable") else 400,
+                    exc.code, str(exc), exc.offer)
+
+    @app.get("/health")
+    def health():
+        """The platform shell and start scripts probe this (module.json health_path). No candidate needed, no data."""
+        return {"status": "ok", "module": "M03"}
 
     # ---- GitHub connection ------------------------------------------------------------------------------------
 
@@ -200,6 +220,41 @@ def create_app(service: AnalyzerService | None = None, client_id: str | None = N
     def security_notices(repo_id: str, x_candidate_id: str | None = Header(None)):
         # private, self-only: the same ownership check as every route, and the only route that returns the private half
         return _ok({"notices": svc.security_notices(mine(repo_id, who(x_candidate_id)))})
+
+    # ---- coding profiles (Codeforces, LeetCode, CodeChef) -----------------------------------------------------------
+
+    @app.put("/v1/coding-profiles")
+    def link_profiles(body: Handles, x_candidate_id: str | None = Header(None)):
+        """Link or change handles. Reading happens on /refresh, so this answers at once with the codes to prove ownership."""
+        return _ok(book.link(who(x_candidate_id), body.model_dump(exclude_none=True)))
+
+    @app.get("/v1/coding-profiles")
+    def get_profiles(x_candidate_id: str | None = Header(None)):
+        return _ok(book.view(who(x_candidate_id)))
+
+    @app.post("/v1/coding-profiles/refresh")
+    def refresh_profiles(x_candidate_id: str | None = Header(None)):
+        return _ok(book.refresh(who(x_candidate_id), force=True))
+
+    @app.post("/v1/coding-profiles/verify")
+    def verify_profiles(x_candidate_id: str | None = Header(None)):
+        return _ok(book.verify(who(x_candidate_id)))
+
+    @app.get("/v1/coding-profiles/insights")
+    def profile_insights(x_candidate_id: str | None = Header(None)):
+        candidate = who(x_candidate_id)
+        book.refresh(candidate)                       # a no-op while the last read is still fresh
+        return _ok({"insights": book.insights(candidate)})
+
+    @app.get("/v1/coding-profiles/questions")
+    def profile_questions(x_candidate_id: str | None = Header(None)):
+        candidate = who(x_candidate_id)
+        book.refresh(candidate)                       # a no-op while the last read is still fresh
+        return _ok({"questions": book.questions(candidate)})
+
+    @app.delete("/v1/coding-profiles", status_code=204)
+    def delete_profiles(x_candidate_id: str | None = Header(None)):
+        book.delete(who(x_candidate_id))
 
     @app.delete("/v1/repos/{repo_id}", status_code=204)
     def delete_repo(repo_id: str, x_candidate_id: str | None = Header(None)):
