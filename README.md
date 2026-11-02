@@ -68,9 +68,43 @@ snapshot  →  inventory  →  contribution  →  decisions  →  ranking  →  
 | Which commits are yours: list, suggest, confirm | `identity.py` |
 | "Explain your own code": a 90-second session on a function you wrote (coaching only) | `explain_gate.py` |
 | Resume claims linked to the repo, as `verifiability` with zero effect on any score | `resume_link.py` |
+| Competitive-programming profiles (Codeforces, LeetCode, CodeChef): read, ownership check, questions | `coding_profiles.py` |
 | Everything together; student and private output kept apart; per-stage timings | `pipeline.py` |
 | Jobs, SHA-pinned snapshots kept until you delete them, per-commit cache | `service.py` |
 | The `/v1` HTTP routes, and the last check before anything is sent | `api.py`, `guard.py` |
+
+### Coding profiles
+
+A student links their Codeforces, LeetCode and CodeChef usernames (or pastes the profile links). We read the public
+profile and turn the numbers into interview questions about the problems behind them. Same rules as the rest of M03:
+no combined score, `score_effect` is always 0, and a platform we cannot read is "unavailable", never a mark against the student.
+
+| Platform | Read through | If it breaks |
+|---|---|---|
+| Codeforces | the official API (`user.info`, `user.rating`, `user.status`), one call per two seconds | named error; the others still load |
+| LeetCode | the public GraphQL endpoint the site uses (not an official API) | "unavailable"; last good numbers stay, marked stale |
+| CodeChef | the public profile page, parsed tolerantly | "partial" or "unavailable"; never a guessed number |
+
+Charts on the screen: submissions per day (a month with ‹ ›, the last 30 days, or the last 12 months, one colour per site), rating over time (each site on its own scale), and the level mix. The sites report *when* you submitted, not how long you worked, so time spent is shown as submissions and active days and the page says so. Colours come from the data-viz categorical order and were validated on the shell's light and dark surfaces; green and amber are left alone because they mean confirmed and reported here. Every chart has a hover readout and a "View as table".
+
+Ownership: each handle gets a short code (`gha-xxxxxxxx`). The student puts it in a public profile field and calls
+`/verify`. Until then the numbers are shown as self-reported. Reads are cached for six hours.
+
+Just the numbers, from the command line (any one, two or all three sites; links work too):
+
+```bash
+python -m gh_analyzer.coding_profiles --leetcode abhinavnair28 --codeforces <user> --codechef <user> --json stats.json --csv stats.csv
+```
+
+| Route | Does |
+|---|---|
+| `PUT /v1/coding-profiles` | link, change or unlink handles (`""` unlinks); returns the verification codes |
+| `POST /v1/coding-profiles/refresh` | read all linked profiles now |
+| `POST /v1/coding-profiles/verify` | read again and look for the codes |
+| `GET /v1/coding-profiles` | the profiles and every number read from them |
+| `GET /v1/coding-profiles/insights` | plain-sentence readings of those numbers (mix of levels, contest trend, topics with few solves, steadiness), each with its figures; descriptive, never a mark |
+| `GET /v1/coding-profiles/questions` | interview questions from the numbers (built, hidden on the screen for now) |
+| `DELETE /v1/coding-profiles` | forget everything |
 
 ### Run the service
 
