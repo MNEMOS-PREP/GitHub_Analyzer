@@ -1,0 +1,2 @@
+/* One entry graph: core's tokens first, so Tailwind sees both (same as M01's theme.css). */
+@import "@ai/core/styles.css";
