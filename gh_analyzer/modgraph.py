@@ -39,18 +39,18 @@ def _resolve_js(files: set[str], importer: str, spec: str) -> str | None:
     return None
 
 
-def in_degree(root: Path, analysed: list[str]) -> dict[str, int]:
+def edges(root: Path, analysed: list[str]) -> set[tuple[str, str]]:
+    """(importer, imported) pairs between analysed JavaScript, TypeScript, Java and Go files; never a self-edge."""
     files = set(analysed)
     js = [p for p in analysed if p.endswith(JS_EXT)]
     java = [p for p in analysed if p.endswith(".java")]
     go = [p for p in analysed if p.endswith(".go")]
-    indeg = {p: 0 for p in js + java + go}
+    found: set[tuple[str, str]] = set()
 
     for rel in js:
         targets = {t for spec in _JS_IMPORT.findall(_read(root, rel)) if (t := _resolve_js(files, rel, spec))}
         targets.discard(rel)
-        for t in targets:
-            indeg[t] += 1
+        found.update((rel, t) for t in targets)
 
     # Java: a fully qualified class name maps to the file whose package + file name spell it
     classes: dict[str, str] = {}
@@ -74,8 +74,7 @@ def in_degree(root: Path, analysed: list[str]) -> dict[str, int]:
                 if hit:
                     targets.add(hit)
         targets.discard(rel)
-        for t in targets:
-            indeg[t] += 1
+        found.update((rel, t) for t in targets)
 
     # Go: an import path names a directory; every file importing it depends on that package's files equally
     by_dir: dict[str, list[str]] = {}
@@ -93,6 +92,12 @@ def in_degree(root: Path, analysed: list[str]) -> dict[str, int]:
                     hit_dirs.add(d)
         for d in hit_dirs:
             if d != posixpath.dirname(rel):
-                for t in by_dir[d]:
-                    indeg[t] += 1
+                found.update((rel, t) for t in by_dir[d])
+    return found
+
+
+def in_degree(root: Path, analysed: list[str]) -> dict[str, int]:
+    indeg = {p: 0 for p in analysed if p.endswith(JS_EXT + (".java", ".go"))}
+    for _, imported in edges(root, analysed):
+        indeg[imported] += 1
     return indeg

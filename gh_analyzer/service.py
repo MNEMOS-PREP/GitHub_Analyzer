@@ -128,7 +128,8 @@ class AnalyzerService:
         self._event(rec, "snapshot_done", sha=snap.sha[:12])
         try:
             result = pipeline.analyse_snapshot(snap, None, rec.resume_titles, rec.fork_of, self.reference_corpus, rec.claims,
-                                               progress=lambda stage: self._event(rec, stage))
+                                               progress=lambda stage: self._event(rec, stage),
+                                               cache_dir=self.storage / ".context_cache")
         except Exception as exc:
             self._finish_failed(rec, FALLBACK_MESSAGE, code="unexpected", detail=repr(exc))
             return
@@ -180,6 +181,9 @@ class AnalyzerService:
     def decisions(self, rec: Record) -> list[dict]:
         return (rec.result or {}).get("student", {}).get("decisions", [])
 
+    def diagrams(self, rec: Record) -> dict:
+        return (rec.result or {}).get("student", {}).get("diagrams", {})
+
     def questions(self, rec: Record, depth: int | None = None) -> list[dict]:
         s = (rec.result or {}).get("student", {})
         qs = s.get("questions", []) + s.get("supplementary_questions", [])
@@ -199,7 +203,8 @@ class AnalyzerService:
             raise identity.IdentityError("This repository has not been read yet.")
         confirmed = identity.confirm(rec.candidates, emails)
         result = pipeline.analyse_snapshot(rec.snap, confirmed, rec.resume_titles, rec.fork_of, self.reference_corpus, rec.claims,
-                                           progress=lambda stage: self._event(rec, f"reanalysis:{stage}"))
+                                           progress=lambda stage: self._event(rec, f"reanalysis:{stage}"),
+                                           cache_dir=self.storage / ".context_cache")
         with self._lock:
             rec.identities, rec.result = confirmed, result
             rec.gate_sessions.clear()
@@ -239,6 +244,9 @@ class AnalyzerService:
             self._records.pop(rec.id, None)
             for k in [k for k, v in self._cache.items() if v == rec.id]:
                 del self._cache[k]
+            sha_shared = any(r.pinned_sha == rec.pinned_sha for r in self._records.values())
+        if rec.pinned_sha and not sha_shared:
+            shutil.rmtree(self.storage / ".context_cache" / rec.pinned_sha, ignore_errors=True)
         if rec.snap is not None:
             rec.snap.cleanup()
         shutil.rmtree(self.storage / rec.id, ignore_errors=True)

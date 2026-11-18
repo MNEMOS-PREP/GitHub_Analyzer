@@ -51,6 +51,7 @@ class Handles(BaseModel):
     codeforces: str | None = None
     leetcode: str | None = None
     codechef: str | None = None
+    hackerrank: str | None = None
 
 
 def _ok(payload, status: int = 200) -> JSONResponse:
@@ -200,6 +201,10 @@ def create_app(service: AnalyzerService | None = None, client_id: str | None = N
     def decisions(repo_id: str, x_candidate_id: str | None = Header(None)):
         return _ok({"decisions": svc.decisions(mine(repo_id, who(x_candidate_id)))})
 
+    @app.get("/v1/repos/{repo_id}/diagrams")
+    def diagrams(repo_id: str, x_candidate_id: str | None = Header(None)):
+        return _ok({"diagrams": svc.diagrams(mine(repo_id, who(x_candidate_id)))})
+
     @app.get("/v1/repos/{repo_id}/questions")
     def questions(repo_id: str, depth: int | None = Query(None, ge=0, le=3), x_candidate_id: str | None = Header(None)):
         return _ok({"questions": svc.questions(mine(repo_id, who(x_candidate_id)), depth)})
@@ -221,7 +226,7 @@ def create_app(service: AnalyzerService | None = None, client_id: str | None = N
         # private, self-only: the same ownership check as every route, and the only route that returns the private half
         return _ok({"notices": svc.security_notices(mine(repo_id, who(x_candidate_id)))})
 
-    # ---- coding profiles (Codeforces, LeetCode, CodeChef) -----------------------------------------------------------
+    # ---- coding profiles (Codeforces, LeetCode, CodeChef, HackerRank) -----------------------------------------------------------
 
     @app.put("/v1/coding-profiles")
     def link_profiles(body: Handles, x_candidate_id: str | None = Header(None)):

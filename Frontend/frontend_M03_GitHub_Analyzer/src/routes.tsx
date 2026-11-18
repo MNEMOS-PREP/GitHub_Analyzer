@@ -2,7 +2,7 @@
  * M03 - GitHub Analyzer · routes.
  *
  *   /github          paste a repository link; earlier analyses
- *   /github/profiles Codeforces, LeetCode and CodeChef profiles, and the questions they make
+ *   /github/profiles Codeforces, LeetCode, CodeChef and HackerRank profiles, and the questions they make
  *   /github/:repoId  what was found, and the questions it makes
  *
  * No index route: the host (the shell's Today, or standalone's redirect) owns it.

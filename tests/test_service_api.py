@@ -37,6 +37,12 @@ def test_submit_returns_202_and_the_read_is_a_student_safe_payload(stack):
     assert guard.problems(body) == []
 
 
+def test_health_answers_without_a_candidate(stack):
+    client, _, _ = stack
+    r = client.get("/health")
+    assert r.status_code == 200 and r.json()["module"] == "M03"
+
+
 def test_every_route_needs_a_candidate_and_a_repo_belongs_to_its_owner(stack):
     client, svc, repo = stack
     rid = submit(client, repo)

@@ -7,11 +7,14 @@
  * status line. Identity comes from the same session, via `sessionHeaders`.
  */
 
+import { useEffect, useReducer, useRef } from "react";
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getSession, sessionHeaders } from "@ai/core";
 
-import type { Handles, IdentityOptions, NamedError, ProfileInsight, ProfileQuestion, ProfilesView, RepoView, SecurityNotice } from "./types";
+import { gaveUp, GIVE_UP_MS, nextPoll } from "./prPolling";
+import type { AgentStatus, Diagrams, Handles, IdentityOptions, NamedError, PrReviewJob, PrReviewRequest, PrReviewStart, ProfileInsight, ProfileQuestion, ProfilesView, RepoView, SecurityNotice } from "./types";
 
 export class M03Error extends Error {
   constructor(
@@ -150,6 +153,62 @@ export function useSecurityNotices(id: string, enabled: boolean) {
   });
 }
 
+/** `{}` for analyses made before diagrams existed. */
+export function useDiagrams(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["m03", "diagrams", id],
+    queryFn: () => call<{ diagrams: Partial<Diagrams> }>(`/v1/repos/${id}/diagrams`),
+    enabled,
+    retry: false,
+  });
+}
+
+/* ---- pull request review (the opt-in agents layer; a 404 here means the site runs without it) ---- */
+
+export function useAgentStatus() {
+  return useQuery({
+    queryKey: ["m03", "agents", "status"],
+    // Under `github` (an M03 noun in the site shell); `/v1/agents/...` is routed to M06.
+    queryFn: () => call<AgentStatus>("/v1/github/pr-helper/status"),
+    retry: false,
+    staleTime: 60_000,
+  });
+}
+
+/** 202 `{job_id}`, or a named error (agent_not_configured, invalid_ref, not_ready, busy, limit). */
+export function useStartPrReview(id: string) {
+  return useMutation({
+    mutationFn: (req: PrReviewRequest) =>
+      call<PrReviewStart>(`/v1/repos/${id}/agents/pr`, { method: "POST", body: JSON.stringify(req) }),
+  });
+}
+
+/**
+ * Polls one review every 2 s until it is done or failed; after 3 minutes without an answer it stops and says so
+ * (`gaveUp`). The job id lives in the caller's state only: a reload loses the result, by design.
+ */
+export function usePrReview(id: string, jobId: string | null) {
+  const since = useRef<{ job: string; at: number } | null>(null);
+  if (jobId && since.current?.job !== jobId) since.current = { job: jobId, at: Date.now() };
+  const waited = () => (since.current ? Date.now() - since.current.at : 0);
+  const [, wake] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (!jobId) return;
+    const t = setTimeout(wake, GIVE_UP_MS + 100);   // re-render once the wait runs out, so `gaveUp` shows
+    return () => clearTimeout(t);
+  }, [jobId]);
+
+  const job = useQuery({
+    queryKey: ["m03", "pr-review", id, jobId],
+    queryFn: () => call<PrReviewJob>(`/v1/repos/${id}/agents/pr/${jobId}`),
+    enabled: !!jobId && waited() < GIVE_UP_MS,
+    retry: false,
+    refetchInterval: (q) =>
+      nextPoll(q.state.data?.status, waited(), q.state.error instanceof M03Error ? q.state.error.status : undefined),
+  });
+  return { job, gaveUp: !!jobId && gaveUp(job.data?.status, waited()) };
+}
+
 export function useDeleteRepo(id: string) {
   return useMutation({
     mutationFn: () => call<void>(`/v1/repos/${id}`, { method: "DELETE" }),
@@ -157,7 +216,7 @@ export function useDeleteRepo(id: string) {
   });
 }
 
-/* ---- coding profiles: Codeforces, LeetCode, CodeChef ---- */
+/* ---- coding profiles: Codeforces, LeetCode, CodeChef, HackerRank ---- */
 
 const PROFILES = ["m03", "profiles"] as const;
 

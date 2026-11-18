@@ -44,6 +44,22 @@ python -m gh_analyzer <folder | owner/name | github link> --me you@example.com -
 
 Run the tests with `python -m pytest -q` (about 2 minutes; many build real git repositories).
 
+### Diagrams
+
+Every analysis also draws the repository as three Mermaid diagrams (modules, imports, entry flow) plus a JSON graph, capped at the 25 most-imported files. `--mermaid DIR` writes `modules.mmd`, `imports.mmd`, `entry_flow.mmd` and `graph.json` into `DIR`; the API serves the same data at `GET /v1/repos/{id}/diagrams`. Open the `.mmd` files in Archify or any Mermaid viewer. Edges come only from real imports; where a language can only be read as a folder layout, the diagram says so in its notes.
+
+### PR agent
+
+An opt-in helper that explains a branch before you open a pull request: what changed, a checklist of things to check (each with why it matters and the evidence it rests on, such as `E2`), and a suggested title and description. It needs a language model, configured only through environment variables: `LLM_API_KEY` (required), `LLM_BASE_URL` (default `https://api.groq.com/openai/v1`, any OpenAI-compatible endpoint) and `LLM_MODEL` (default `openai/gpt-oss-120b`).
+
+```bash
+python -m gh_analyzer.agents pr <folder | owner/name | github link> --base main --head my-feature [--json review.json] [--no-verify]
+```
+
+Guarantees: it only reads (allowlisted read-only `git` commands; it never pushes, comments, merges or writes to the repository, and runs nothing from it); every string sent to the model has secrets redacted first; each run is capped at 8 model steps, 6 file reads and 20,000 tokens; a checklist item without supporting evidence is dropped; it gives no verdict and never affects any score. Exit code 0 for a report, 1 if the review could not finish (including an unknown branch or commit), 2 if the repository cannot be read, `LLM_API_KEY` is missing, or the `--json` file cannot be written (the report is still printed).
+
+**Using the PR agent from the site.** Serve the app with `uvicorn --factory gh_analyzer.agents_app:create_app` (what `start_github.bat` does); `gh_analyzer.api:create_app` stays the core app with no agent code loaded. The same `LLM_API_KEY`, `LLM_BASE_URL` and `LLM_MODEL` variables switch it on: `GET /v1/github/pr-helper/status` says whether it is available (under `github`, not `agents`: the site shell routes `/v1/agents/...` to M06), `POST /v1/repos/{id}/agents/pr` with `{"base", "head", "verify"}` starts a review in the background and `GET /v1/repos/{id}/agents/pr/{job_id}` returns it when done. A repository allows 5 reviews per hour and one at a time; reviews are kept in memory only and removed when the repository is deleted. The review reads the service's own copy of the repository (for a GitHub repository the two branches may be fetched into that copy; a local folder is only read). What leaves the machine: redacted excerpts of the diff and the files the agent reads, and the Tier 1 project overview, sent to the configured model endpoint. The key and endpoint are never shown in any response.
+
 ---
 
 ## How it works
@@ -68,14 +84,14 @@ snapshot  →  inventory  →  contribution  →  decisions  →  ranking  →  
 | Which commits are yours: list, suggest, confirm | `identity.py` |
 | "Explain your own code": a 90-second session on a function you wrote (coaching only) | `explain_gate.py` |
 | Resume claims linked to the repo, as `verifiability` with zero effect on any score | `resume_link.py` |
-| Competitive-programming profiles (Codeforces, LeetCode, CodeChef): read, ownership check, questions | `coding_profiles.py` |
+| Competitive-programming profiles (Codeforces, LeetCode, CodeChef, HackerRank): read, ownership check, questions | `coding_profiles.py` |
 | Everything together; student and private output kept apart; per-stage timings | `pipeline.py` |
 | Jobs, SHA-pinned snapshots kept until you delete them, per-commit cache | `service.py` |
 | The `/v1` HTTP routes, and the last check before anything is sent | `api.py`, `guard.py` |
 
 ### Coding profiles
 
-A student links their Codeforces, LeetCode and CodeChef usernames (or pastes the profile links). We read the public
+A student links their Codeforces, LeetCode, CodeChef and HackerRank usernames (or pastes the profile links). We read the public
 profile and turn the numbers into interview questions about the problems behind them. Same rules as the rest of M03:
 no combined score, `score_effect` is always 0, and a platform we cannot read is "unavailable", never a mark against the student.
 
@@ -84,16 +100,17 @@ no combined score, `score_effect` is always 0, and a platform we cannot read is 
 | Codeforces | the official API (`user.info`, `user.rating`, `user.status`), one call per two seconds | named error; the others still load |
 | LeetCode | the public GraphQL endpoint the site uses (not an official API) | "unavailable"; last good numbers stay, marked stale |
 | CodeChef | the public profile page, parsed tolerantly | "partial" or "unavailable"; never a guessed number |
+| HackerRank | the public JSON the profile page loads (profile, badges, submission history; not an official API) | "partial" if one part is missing, else "unavailable"; never a guessed number |
 
 Charts on the screen: submissions per day (a month with ‹ ›, the last 30 days, or the last 12 months, one colour per site), rating over time (each site on its own scale), and the level mix. The sites report *when* you submitted, not how long you worked, so time spent is shown as submissions and active days and the page says so. Colours come from the data-viz categorical order and were validated on the shell's light and dark surfaces; green and amber are left alone because they mean confirmed and reported here. Every chart has a hover readout and a "View as table".
 
 Ownership: each handle gets a short code (`gha-xxxxxxxx`). The student puts it in a public profile field and calls
 `/verify`. Until then the numbers are shown as self-reported. Reads are cached for six hours.
 
-Just the numbers, from the command line (any one, two or all three sites; links work too):
+Just the numbers, from the command line (any of the four sites; links work too):
 
 ```bash
-python -m gh_analyzer.coding_profiles --leetcode abhinavnair28 --codeforces <user> --codechef <user> --json stats.json --csv stats.csv
+python -m gh_analyzer.coding_profiles --leetcode abhinavnair28 --codeforces <user> --codechef <user> --hackerrank <user> --json stats.json --csv stats.csv
 ```
 
 | Route | Does |

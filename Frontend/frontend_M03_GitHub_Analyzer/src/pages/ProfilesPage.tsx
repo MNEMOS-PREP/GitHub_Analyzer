@@ -1,5 +1,5 @@
 /**
- * M03 · coding profiles: Codeforces, LeetCode, CodeChef.
+ * M03 · coding profiles: Codeforces, LeetCode, CodeChef, HackerRank.
  *
  * The student links usernames; we read the public profile and turn the numbers
  * into questions about the problems behind them. Same rules as the repository
@@ -28,12 +28,13 @@ const PLATFORMS: { id: Platform; name: string; placeholder: string }[] = [
   { id: "codeforces", name: "Codeforces", placeholder: "username or codeforces.com/profile/…" },
   { id: "leetcode", name: "LeetCode", placeholder: "username or leetcode.com/u/…" },
   { id: "codechef", name: "CodeChef", placeholder: "username or codechef.com/users/…" },
+  { id: "hackerrank", name: "HackerRank", placeholder: "username or hackerrank.com/profile/…" },
 ];
 
 /** Statistics first. The questions are built and served (/v1/coding-profiles/questions); flip this to show them. */
 const SHOW_QUESTIONS = false;
 
-const NAME: Record<Platform, string> = { codeforces: "Codeforces", leetcode: "LeetCode", codechef: "CodeChef" };
+const NAME: Record<Platform, string> = { codeforces: "Codeforces", leetcode: "LeetCode", codechef: "CodeChef", hackerrank: "HackerRank" };
 
 /** Only the numbers the platform actually gave; an absent one is left out, not shown as zero. */
 function statRows(platform: Platform, s: ProfileStats): [string, string][] {
@@ -51,6 +52,10 @@ function statRows(platform: Platform, s: ProfileStats): [string, string][] {
     rows.push(["Contest rating", n(s.contest_rating)]);
     rows.push(["Contests", s.contest_rating != null ? n(s.contests) : null]);
     rows.push(["Current streak", s.streak != null ? `${s.streak} days` : null]);
+  } else if (platform === "hackerrank") {
+    rows.push(["Problem Solving", s.solved_total != null ? `${s.solved_total.toLocaleString()}${s.challenges_available ? ` of ${s.challenges_available.toLocaleString()}` : ""}${s.stars ? ` · ${s.stars}★` : ""}` : null]);
+    rows.push(["Rank in that track", n(s.track_rank)]);
+    rows.push(["Badges with stars", s.badges ? String(s.badges.filter((b) => b.stars > 0).length) : null]);
   } else {
     rows.push(["Rating", s.rating != null ? `${s.rating}${s.stars ? ` · ${s.stars}★` : ""}` : null]);
     rows.push(["Peak rating", n(s.max_rating)]);
@@ -71,7 +76,7 @@ export function ProfilesPage() {
   const insights = useProfileInsights(rows.some((r) => r.stats));
   const questions = useProfileQuestions(SHOW_QUESTIONS && rows.some((r) => r.stats));
 
-  const [handles, setHandles] = useState<Record<Platform, string>>({ codeforces: "", leetcode: "", codechef: "" });
+  const [handles, setHandles] = useState<Record<Platform, string>>({ codeforces: "", leetcode: "", codechef: "", hackerrank: "" });
   const [filled, setFilled] = useState(false);
   useEffect(() => {
     // Fill the form from what is already linked, once; after that the student's typing is theirs.
@@ -143,7 +148,7 @@ export function ProfilesPage() {
         {profiles.isError && <ErrorNote message="Couldn't load your profiles. Try again in a moment." />}
         {profiles.data && rows.length === 0 && !link.isPending && (
           <EmptyState title="No profiles linked yet" icon="search">
-            Add a username above. You can use one site, or all three.
+            Add a username above. You can use one site, or all four.
           </EmptyState>
         )}
 
@@ -196,7 +201,7 @@ export function ProfilesPage() {
         {rows.length > 0 && (
           <div className="border-t border-line pt-4">
             <Button size="sm" variant="ghost" disabled={remove.isPending}
-              onClick={() => { remove.mutate(); setHandles({ codeforces: "", leetcode: "", codechef: "" }); }}>
+              onClick={() => { remove.mutate(); setHandles({ codeforces: "", leetcode: "", codechef: "", hackerrank: "" }); }}>
               Remove all my coding profiles
             </Button>
           </div>
