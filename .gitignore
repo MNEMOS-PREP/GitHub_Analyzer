@@ -32,3 +32,8 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Local analysis output and test scratch
+gha_storage/
+test_tmp/
+repo/
