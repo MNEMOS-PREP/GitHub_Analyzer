@@ -249,6 +249,7 @@ def _fsmonitor_repo(tmp_path):
     marker = tmp_path / "fsmon_marker.txt"
     script = tmp_path / "fsmon.sh"
     script.write_text(f"#!/bin/sh\necho ran > '{marker.as_posix()}'\ncat\n", encoding="utf-8")
+    script.chmod(0o755)     # git on Linux will not run a script that is not executable
     make_repo(root, [{"files": {"a.py": "x = 1\n"}, "msg": "base"}])
     run(root, "checkout", "-q", "-b", "feature")
     make_branch_commit(root, {"a.py": "x = 2\n"})
@@ -312,6 +313,28 @@ def test_read_git_hardens_config_and_closes_stdin(tmp_repo, monkeypatch):
         assert setting in pre and pre[pre.index(setting) - 1] == "-c"
     assert any(s.startswith("core.hooksPath=") for s in pre)
     assert seen["kw"].get("stdin") is subprocess.DEVNULL
+
+
+def test_work_tree_is_a_real_empty_directory(tmp_repo, monkeypatch):
+    """Linux git refuses --work-tree=/dev/null ("must be run in a work tree"), so working-tree commands such as
+    `diff HEAD` failed there. The work tree must be an existing empty directory, which still reads no repo file."""
+    import os
+    import subprocess
+
+    from gh_analyzer.agents import gitread
+    path = tmp_repo([{"files": {"a.py": "x = 1\n"}}])
+    seen = {}
+    real = subprocess.run
+
+    def spy(cmd, **kw):
+        seen["cmd"] = cmd
+        return real(cmd, **kw)
+    monkeypatch.setattr(gitread.subprocess, "run", spy)
+    read_git(path, "diff", "HEAD")
+    wt = [s for s in seen["cmd"] if s.startswith("--work-tree=")]
+    assert len(wt) == 1
+    directory = wt[0].split("=", 1)[1]
+    assert os.path.isdir(directory) and os.listdir(directory) == []
 
 
 def test_changed_files_does_not_mistake_a_file_for_the_range(tmp_repo):
