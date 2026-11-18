@@ -109,6 +109,32 @@ def _band(r: int) -> str:
     return BANDS[0] if r < 1200 else BANDS[1] if r < 1600 else BANDS[2] if r < 2000 else BANDS[3]
 
 
+#: A Codeforces rating as an interview-sized difficulty (2026-11-19, for M22's problem-solving ladder): Div. 2 A/B
+#: problems sit under 1200, the C/D a placement round asks for in 1200-1799, and what is past that is hard. A problem
+#: with no rating is left out of every level rather than guessed.
+LEVEL_CUTS = (("easy", 1200), ("medium", 1800), ("hard", None))
+
+
+def _level(r: int) -> str:
+    return next(name for name, below in LEVEL_CUTS if below is None or r < below)
+
+
+def _tag_levels(solved: list[dict]) -> list[dict]:
+    """Solved problems per topic AND difficulty, a row per topic, most solved first: what "two pointers: medium done,
+    hard to go" needs, and what `tag_counts` and `solved_by_rating` cannot say apart."""
+    table: dict[str, Counter] = {}
+    for p in solved:
+        rating = p.get("rating")
+        for tag in p.get("tags", []):
+            row = table.setdefault(tag, Counter())
+            row["solved"] += 1
+            if isinstance(rating, int):
+                row[_level(rating)] += 1
+    rows = [{"tag": tag, "solved": c["solved"], "easy": c["easy"], "medium": c["medium"], "hard": c["hard"]}
+            for tag, c in table.items()]
+    return sorted(rows, key=lambda r: (-r["solved"], r["tag"]))
+
+
 def _activity(days: set[str], now: float) -> dict:
     """How steady the practice is, from the days with any submission: recent counts and the longest break in the past year."""
     today = datetime.fromtimestamp(now, timezone.utc).date()
@@ -190,6 +216,7 @@ def fetch_codeforces(handle: str, t: Transport, sleep=time.sleep, now: float | N
              "last_active": datetime.fromtimestamp(last, timezone.utc).strftime("%Y-%m-%d") if last else None,
              "submissions_read": len(subs), "truncated": len(subs) >= CF_SUBMISSIONS,
              "tag_counts": _pairs(tags, "tag"), "solved_by_rating": {k: bands[k] for k in BANDS if bands[k]},
+             "tag_levels": _tag_levels(list(solved.values())),
              "submissions_total": len(subs), "submissions_accepted": sum(1 for x in subs if x.get(CF_RESULT_FIELD) == "OK"),
              "recent_contests": len(recent), "recent_rating_change": recent[-1]["newRating"] - recent[0]["oldRating"] if recent else None,
              "best_contest_rank": min(ranks) if ranks else None, **_activity(days, now),

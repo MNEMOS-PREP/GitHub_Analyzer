@@ -229,3 +229,17 @@ def test_the_students_own_words_in_our_wording_are_not_a_verdict():
     assert guard.problems(named) == []
     assert guard.problems({"question": "Is Fake News Detection original work?", "project": "Fake News Detection"})
     assert guard.problems({"message": "We doubt its authenticity."})
+
+
+def test_my_repos_lists_what_each_analysed_repo_shows_to_its_owner_only(stack):
+    """M22's project gaps read this: a goal's technologies against what the student's own repos use."""
+    client, svc, repo = stack
+    rid = submit(client, repo)
+    mine = client.get("/v1/repos", headers=H)
+    assert mine.status_code == 200
+    (row,) = mine.json()["repos"]
+    assert row["id"] == rid and row["status"] == "ready"
+    assert set(row) >= {"languages", "frameworks", "has_tests", "has_ci", "has_dockerfile", "has_readme"}
+    assert guard.problems(mine.json()) == []
+    assert client.get("/v1/repos", headers={"X-Candidate-Id": "someone-else"}).json()["repos"] == []
+    assert client.get("/v1/repos").status_code == 401

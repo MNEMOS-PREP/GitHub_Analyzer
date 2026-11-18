@@ -165,6 +165,20 @@ class AnalyzerService:
 
     # ---- views ------------------------------------------------------------------------------------------------
 
+    def mine(self, candidate_id: str) -> list[dict]:
+        """Every repository this student has had analysed, newest first, as what it SHOWS: its languages, frameworks
+        and whether it has tests, CI, a Dockerfile and a README (2026-11-19, for M22's project gaps). Only the
+        inventory leaves: no code, no secret notices, no contribution figures."""
+        with self._lock:
+            recs = [r for r in self._records.values() if r.candidate_id == candidate_id]
+        out = []
+        for rec in sorted(recs, key=lambda r: -r.created):
+            inv = ((rec.result or {}).get("student") or {}).get("inventory") or {}
+            out.append({"id": rec.id, "repo": rec.repo, "status": rec.status, "analysed_at": rec.created,
+                        **{k: inv.get(k) for k in ("languages", "frameworks", "has_tests", "has_ci", "has_dockerfile",
+                                                   "has_readme", "loc_total")}})
+        return out
+
     def student_view(self, rec: Record) -> dict:
         base = {"id": rec.id, "status": rec.status, "repo": rec.repo, "pinned_sha": (rec.pinned_sha or "")[:12] or None,
                 "cached": rec.cached, "progress": [e["stage"] for e in rec.events]}

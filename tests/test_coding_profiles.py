@@ -487,3 +487,14 @@ def test_series_are_in_the_view_and_the_json_but_not_the_one_row_csv_and_pass_th
     view = b.view("c")
     assert all(p["stats"]["daily"] for p in view["profiles"]) and guard.problems(view) == []
     assert not any(k in r for r in cp.stats_rows(view) for k in cp.SERIES)
+
+
+def test_codeforces_counts_each_topic_by_difficulty_for_the_problem_solving_ladder():
+    """M22's ladder asks "two pointers: medium done, hard to go" — `tag_counts` and `solved_by_rating` alone cannot
+    say which topic the hard ones were in."""
+    s = cp.fetch_codeforces("asha", Net(), lambda s: None, NOW)["stats"]
+    rows = {r["tag"]: r for r in s["tag_levels"]}
+    assert rows["greedy"] == {"tag": "greedy", "solved": 2, "easy": 1, "medium": 1, "hard": 0}
+    assert rows["graphs"]["hard"] == 1 and rows["dp"]["medium"] == 1
+    assert s["tag_levels"][0]["tag"] == "greedy", "most solved first"
+    assert all(set(r) == {"tag", "solved", "easy", "medium", "hard"} for r in s["tag_levels"]), "no topic as a key"

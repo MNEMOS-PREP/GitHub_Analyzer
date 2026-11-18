@@ -160,6 +160,12 @@ def create_app(service: AnalyzerService | None = None, client_id: str | None = N
                          client=client_for(candidate) if candidate in tokens else None)
         return _ok({"id": rec.id, "status": rec.status, "cached": rec.cached}, 202)
 
+    @app.get("/v1/repos")
+    def my_repos(x_candidate_id: str | None = Header(None)):
+        """The student's own analysed repositories and what each shows — what Follow Your Goal (M22) reads to say which
+        of a goal's technologies no project of theirs uses yet. Declared before `/v1/repos/{repo_id}`."""
+        return _ok({"repos": svc.mine(who(x_candidate_id))})
+
     @app.get("/v1/repos/{repo_id}")
     def get_repo(repo_id: str, x_candidate_id: str | None = Header(None)):
         return _ok(svc.student_view(mine(repo_id, who(x_candidate_id))))
