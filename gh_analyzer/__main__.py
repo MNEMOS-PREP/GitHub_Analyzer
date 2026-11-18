@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from . import pipeline
 from .snapshot import SnapshotError
@@ -17,6 +18,7 @@ def main() -> int:
     ap.add_argument("--reference", help="a corpus built with `python -m gh_analyzer.reference build` (or GH_ANALYZER_REFERENCE)")
     ap.add_argument("--json", help="write the full result (including the private part) here")
     ap.add_argument("--md", help="write the student-facing read-back here")
+    ap.add_argument("--mermaid", metavar="DIR", help="write the diagrams (modules.mmd, imports.mmd, entry_flow.mmd, graph.json) into this folder")
     a = ap.parse_args()
     try:
         result = pipeline.analyse_repo(a.target, a.me, a.keywords, fork_of=a.fork_of, reference_corpus=a.reference)
@@ -30,11 +32,29 @@ def main() -> int:
     if a.md:
         with open(a.md, "w", encoding="utf-8") as fh:
             fh.write(md)
+    mermaid_error = None
+    if a.mermaid:
+        d = result.get("student", {}).get("diagrams")
+        if d:
+            try:
+                out = Path(a.mermaid)
+                out.mkdir(parents=True, exist_ok=True)
+                for name, text in d["mermaid"].items():
+                    (out / f"{name}.mmd").write_text(text + "\n", encoding="utf-8")
+                with open(out / "graph.json", "w", encoding="utf-8") as fh:
+                    json.dump(d["graph"], fh, indent=1)
+            except OSError as exc:
+                mermaid_error = f"Could not write diagrams to {a.mermaid}: {exc.strerror or exc}"
+        else:
+            print("No diagrams were written: there is nothing to draw for this repository.")
     sys.stdout.reconfigure(encoding="utf-8")
     print(md)
     notices = result.get("private", {}).get("secret_notices", [])
     for n in notices:
         print("PRIVATE:", n)
+    if mermaid_error:
+        print(mermaid_error)
+        return 2
     return 0
 
 

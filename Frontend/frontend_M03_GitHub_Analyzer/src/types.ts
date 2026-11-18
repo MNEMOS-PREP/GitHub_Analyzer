@@ -94,6 +94,97 @@ export interface IdentityOptions {
 
 export type SecurityNotice = Record<string, unknown>;
 
+/* ---- diagrams (gh_analyzer/visualise.py `diagrams`; `{}` for older analyses) ---- */
+
+export interface DiagramNode {
+  id: string;
+  path: string;
+  /** The top-level folder, or "(root)". */
+  group: string;
+  in_degree: number;
+  entry: boolean;
+}
+
+/** `from` imports `to`. Only edges read from import lines; never inferred. */
+export interface DiagramEdge {
+  from: string;
+  to: string;
+}
+
+/** full: every language's imports were read · partial: some were not · tree_only: none were, so no arrows. */
+export type GraphQuality = "full" | "partial" | "tree_only";
+
+export interface Diagrams {
+  graph: { nodes: DiagramNode[]; edges: DiagramEdge[]; quality: GraphQuality; truncated: boolean };
+  /** Mermaid `flowchart LR` text, labels already escaped. */
+  mermaid: Partial<Record<"modules" | "imports" | "entry_flow", string>>;
+  notes: string[];
+}
+
+/* ---- pull request review (gh_analyzer/agents_app.py; the report is gh_analyzer/agents/pr_agent.py `_result`) ---- */
+
+/** `GET /v1/github/pr-helper/status`. `reason` is plain words for the student when the helper is off. */
+export interface AgentStatus {
+  pr: { available: boolean; reason: string | null };
+}
+
+export interface PrReviewRequest {
+  base: string;
+  head: string;
+  verify: boolean;
+}
+
+export interface PrReviewStart {
+  job_id: string;
+  status: "running";
+}
+
+export interface PrChange {
+  path: string;
+  what: string;
+}
+
+/** Every item cites at least one evidence id from `PrReport.evidence`. */
+export interface PrCheckItem {
+  item: string;
+  why: string;
+  evidence: string[];
+}
+
+/** A tool call the reviewer made: the tool's name and its arguments only, never what it returned. */
+export interface PrEvidence {
+  tool: string;
+  args: Record<string, unknown>;
+}
+
+/** ok: a review · no_changes: the branches do not differ · incomplete: the review could not be finished. */
+export type PrReportStatus = "ok" | "no_changes" | "incomplete";
+
+export interface PrReport {
+  status: PrReportStatus;
+  summary: string;
+  changes: PrChange[];
+  checklist: PrCheckItem[];
+  suggested_title: string;
+  suggested_description: string;
+  findings: { claim: string; severity: string; evidence: string[] }[];
+  /** Items left out because nothing that was read backed them. */
+  dropped: number;
+  verified: boolean;
+  evidence: Record<string, PrEvidence>;
+  tokens: { prompt: number; completion: number; total: number; tier1?: number };
+  notes: string[];
+}
+
+export type PrJobStatus = "running" | "done" | "failed";
+
+/** `GET /v1/repos/{id}/agents/pr/{job_id}`. */
+export interface PrReviewJob {
+  status: PrJobStatus;
+  report: PrReport | null;
+  error: NamedError | null;
+}
+
 /** The named error the service sends: what happened, and what the student can do next. */
 export interface NamedError {
   code: string;
@@ -103,7 +194,7 @@ export interface NamedError {
 
 /* ---- coding profiles (gh_analyzer/coding_profiles.py `CodingProfiles.view`) ---- */
 
-export type Platform = "codeforces" | "leetcode" | "codechef";
+export type Platform = "codeforces" | "leetcode" | "codechef" | "hackerrank";
 
 /** Every stat is optional: a platform gives what it gives, and a missing number is never filled in. */
 export type ProfileStats = Partial<{
@@ -129,6 +220,10 @@ export type ProfileStats = Partial<{
   /** One point per rated contest, oldest first. */
   rating_history: RatingPoint[];
   solved_by_rating: Record<string, number>;
+  /** HackerRank: one entry per badge track with something in it. */
+  badges: { badge: string; stars: number; solved: number }[];
+  challenges_available: number | null;
+  track_rank: number | null;
   longest_break_days: number;
   active_days_last_30: number;
   active_days_last_90: number;

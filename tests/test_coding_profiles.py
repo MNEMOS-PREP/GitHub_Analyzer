@@ -49,6 +49,21 @@ CC_HTML = """<html><body><div class="rating-number">1623</div><span class="ratin
 <div>Contests Participated: 14</div> <p>about me gha-CODE</p></body></html>"""
 
 
+HR_BADGES = {"status": True, "models": [
+    {"badge_type": "problem-solving", "badge_name": "Problem Solving", "stars": 4, "solved": 106, "total_challenges": 563,
+     "current_points": 2631.9, "hacker_rank": 31722},
+    {"badge_type": "python", "badge_name": "Python", "stars": 5, "solved": 40, "total_challenges": 60},
+    {"badge_type": "java", "badge_name": "Java", "stars": 0, "solved": 0, "total_challenges": 64}]}
+
+
+def hr_profile(bio: str = "") -> dict:
+    return {"model": {"username": "asha", "name": "Asha K", "short_bio": bio, "jobs_headline": "", "website": ""}}
+
+
+def hr_history() -> dict:
+    return {cp._day(NOW - 3 * 86400): 5, cp._day(NOW - 10 * 86400): 2, cp._day(NOW - 400 * 86400): 9}
+
+
 class Net:
     """A fake transport. `rules` maps a URL fragment to a (status, text) or a callable giving one."""
 
@@ -71,6 +86,10 @@ class Net:
             return 200, {}, json.dumps(LC_OK)
         if "codechef.com/users" in url:
             return 200, {}, CC_HTML.replace("gha-CODE", self.bio)
+        if "hackerrank.com/rest/contests/master/hackers/" in url:
+            return 200, {}, json.dumps(hr_profile(self.bio))
+        if "hackerrank.com/rest/hackers/" in url:
+            return 200, {}, json.dumps(HR_BADGES if url.endswith("/badges") else hr_history())
         return 404, {}, ""
 
 
@@ -86,6 +105,8 @@ def book(net=None, **kw):
     ("leetcode", "leetcode.com/asha", "asha"),
     ("codechef", "https://www.codechef.com/users/asha_cc", "asha_cc"),
     ("codeforces", "@asha", "asha"),
+    ("hackerrank", "https://www.hackerrank.com/profile/asha_hr", "asha_hr"),
+    ("hackerrank", "hackerrank.com/asha_hr", "asha_hr"),
 ])
 def test_links_and_bare_handles_are_accepted(platform, text, expected):
     assert cp.normalise_handle(platform, text) == expected
@@ -156,6 +177,52 @@ def test_codechef_reads_what_it_can_and_admits_when_the_page_changed():
     assert e.value.code == "unavailable" and "enter_manually" in e.value.offer
     partial = Net(**{"codechef.com": (200, '<div class="rating-number">1500</div>')})
     assert cp.fetch_codechef("asha", partial, lambda s: None, NOW)["status"] == "partial"
+
+
+def test_hackerrank_reads_badges_and_submission_history():
+    r = cp.fetch_hackerrank("asha", Net(), lambda s: None, NOW)
+    s = r["stats"]
+    assert r["status"] == "ok" and r["profile_url"] == "https://www.hackerrank.com/profile/asha"
+    assert (s["solved_total"], s["stars"], s["challenges_available"], s["track_rank"]) == (106, 4, 563, 31722)
+    assert s["badges"] == [{"badge": "Problem Solving", "stars": 4, "solved": 106}, {"badge": "Python", "stars": 5, "solved": 40}]   # Java has nothing yet
+    assert s["submissions_total"] == 16 and s["last_active"] == cp._day(NOW - 3 * 86400)
+    assert [d["submissions"] for d in s["daily"]] == [2, 5]                       # the 400-day-old day is outside the window
+    assert s["active_days_last_30"] == 2
+
+
+def test_hackerrank_says_missing_changed_or_partial_plainly():
+    with pytest.raises(cp.ProfileError) as e:
+        cp.fetch_hackerrank("nobody", Net(**{"contests/master": (404, "")}), lambda s: None, NOW)
+    assert e.value.code == "not_found"
+    with pytest.raises(cp.ProfileError) as e:
+        cp.fetch_hackerrank("asha", Net(**{"contests/master": (200, "<html>new</html>")}), lambda s: None, NOW)
+    assert e.value.code == "unavailable"
+    with pytest.raises(cp.ProfileError) as e:
+        cp.fetch_hackerrank("asha", Net(**{"contests/master": (503, "")}), lambda s: None, NOW)
+    assert e.value.code == "unavailable" and "retry" in e.value.offer
+    one_missing = cp.fetch_hackerrank("asha", Net(**{"/submission_histories": (403, "")}), lambda s: None, NOW)
+    assert one_missing["status"] == "partial" and one_missing["stats"]["solved_total"] == 106 and "daily" not in one_missing["stats"]
+
+
+def test_hackerrank_ownership_is_checked_in_the_short_bio():
+    n = Net()
+    b = book(n)
+    b.link("c", {"hackerrank": "asha"})
+    code = b.refresh("c")["profiles"][0]["verification"]["code"]
+    assert "Bio" in b.view("c")["profiles"][0]["verification"]["where"] and not b.view("c")["profiles"][0]["verified"]
+    n.bio = f"learning python {code}"
+    assert b.verify("c")["profiles"][0]["verified"]
+
+
+def test_hackerrank_questions_and_insights_cite_their_numbers_and_pass_the_guard():
+    b = read(hackerrank="asha")
+    q = b.questions("c")
+    assert q and q[0]["platform"] == "hackerrank" and "106" in q[0]["question"] and q[0]["score_effect"] == 0
+    ins = {i["id"]: i for i in b.insights("c")}
+    assert ins["hackerrank-insight-1"]["headline"] == "106 Problem Solving challenges solved · 4★"
+    assert "31,722" in ins["hackerrank-insight-1"]["body"]
+    assert guard.problems({"insights": list(ins.values()), "questions": q}) == []
+    assert not any(k in r for r in cp.stats_rows(b.view("c")) for k in cp.SERIES)
 
 
 # ---- the book ---------------------------------------------------------------------------------------------------
@@ -233,7 +300,7 @@ def test_candidates_cannot_see_each_other_and_delete_clears():
 
 def test_questions_cite_the_number_they_came_from_and_never_score():
     b = book()
-    b.link("c", {"codeforces": "asha", "leetcode": "asha", "codechef": "asha"})
+    b.link("c", {p: "asha" for p in cp.PLATFORMS})
     b.refresh("c")
     qs = b.questions("c")
     assert {q["platform"] for q in qs} == set(cp.PLATFORMS)

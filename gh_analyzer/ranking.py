@@ -38,8 +38,8 @@ NEUTRAL_AUTHORED = 0.5
 TOP_N, PER_FILE, MIN_KINDS = 12, 3, 3
 
 
-def import_graph(root: Path, analysed: list[str]) -> dict[str, int]:
-    """In-degree of each file: how many other files import it (Python by `ast`, the rest by modgraph)."""
+def import_edges(root: Path, analysed: list[str]) -> set[tuple[str, str]]:
+    """(importer, imported) pairs between analysed Python files, by `ast`; never a self-edge."""
     py = [p for p in analysed if p.endswith(".py")]
     modules: dict[str, str] = {}
     for rel in py:
@@ -48,7 +48,7 @@ def import_graph(root: Path, analysed: list[str]) -> dict[str, int]:
             parts = parts[:-1]
         if parts:
             modules[".".join(parts)] = rel
-    indeg = {rel: 0 for rel in py}
+    found: set[tuple[str, str]] = set()
     for rel in py:
         try:
             tree = ast.parse((Path(root) / rel).read_text(encoding="utf-8", errors="replace"))
@@ -72,8 +72,15 @@ def import_graph(root: Path, analysed: list[str]) -> dict[str, int]:
                         targets.add(hit)
                         break
         targets.discard(rel)
-        for t in targets:
-            indeg[t] += 1
+        found.update((rel, t) for t in targets)
+    return found
+
+
+def import_graph(root: Path, analysed: list[str]) -> dict[str, int]:
+    """In-degree of each file: how many other files import it (Python by `ast`, the rest by modgraph)."""
+    indeg = {rel: 0 for rel in analysed if rel.endswith(".py")}
+    for _, imported in import_edges(root, analysed):
+        indeg[imported] += 1
     indeg.update(modgraph.in_degree(root, analysed))      # JavaScript, TypeScript, Java and Go
     return indeg
 

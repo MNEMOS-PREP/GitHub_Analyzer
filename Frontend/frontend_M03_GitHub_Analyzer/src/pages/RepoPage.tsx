@@ -61,7 +61,7 @@ export function RepoPage() {
       {submit.isError && !named && <div className="mt-4"><ErrorNote message="That didn't go through. Try again." /></div>}
 
       <p className="mt-4 text-sm text-ink-soft">
-        Also solve problems on Codeforces, LeetCode or CodeChef?{" "}
+        Also solve problems on Codeforces, LeetCode, CodeChef or HackerRank?{" "}
         <Link to="/github/profiles" className="text-brand hover:underline">Add those profiles</Link>
       </p>
 

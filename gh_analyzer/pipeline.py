@@ -15,9 +15,13 @@ import os
 import time
 from pathlib import Path
 
-from . import (contribution, decisions, forks, inventory, no_repo, questions, ranking, reference, resume_link, secrets,
-               selection, snapshot, ts_detect)
+from . import (context, contribution, decisions, forks, inventory, no_repo, questions, ranking, reference, repomap,
+               resume_link, secrets, selection, snapshot, ts_detect, visualise)
 
+DIAGRAMS_UNAVAILABLE = "Diagrams were not available for this repository."
+README_CHARS = 20000
+README_SUFFIXES = {"", ".md", ".markdown", ".rst", ".txt", ".adoc"}
+CONTEXT_CACHE_KIND = "context-v1"
 CONFIG_SCAN = (".env", ".json", ".yml", ".yaml", ".cfg", ".ini", ".toml", ".properties", ".txt")
 ENTRY_NAMES = {"main.py", "app.py", "server.py", "manage.py", "run.py", "wsgi.py", "asgi.py", "index.js", "server.js",
                "app.js", "main.js", "index.ts", "main.ts", "main.go", "Main.java", "Program.cs"}
@@ -86,9 +90,46 @@ def empty_result(message: str) -> dict:
                         "project_round": no_repo.project_round([])}, "private": {}}
 
 
+def _readme_text(root: Path) -> str:
+    """The first README at the repository root, as text only (never executed); empty if there is none."""
+    try:
+        for p in sorted(root.iterdir(), key=lambda q: q.name):
+            if p.name.lower().startswith("readme") and p.suffix.lower() in README_SUFFIXES and p.is_file():
+                with open(p, encoding="utf-8", errors="replace") as fh:
+                    return fh.read(README_CHARS)
+    except OSError:
+        pass
+    return ""
+
+
+def _valid_context_entry(v: dict) -> bool:
+    """A cached entry is usable only if it has the current shape; anything else is rebuilt and overwritten."""
+    d, t = v.get("diagrams"), v.get("tier1")
+    return (isinstance(d, dict) and isinstance(d.get("graph"), dict) and isinstance(d.get("mermaid"), dict)
+            and isinstance(d.get("notes"), list) and isinstance(t, dict) and isinstance(t.get("text"), str)
+            and isinstance(t.get("tokens"), int) and not isinstance(t.get("tokens"), bool))
+
+
+def _context_stage(snap: snapshot.Snapshot, analysed: list[str], languages: dict, cache_dir: Path | None) -> tuple[dict, dict]:
+    """Tier 0/1 and the diagrams. Returns (student diagrams, audit context). One cache entry per SHA, plain JSON only."""
+    root = snap.root
+
+    def build() -> dict:
+        t0 = repomap.build_tier0(root, analysed, languages)
+        text, tokens = context.build_tier1(t0, _readme_text(root))
+        return {"diagrams": visualise.diagrams(t0), "tier1": {"text": text, "tokens": tokens}}
+
+    if cache_dir is None:
+        value, hit = build(), False
+    else:
+        value, hit = context.cached(cache_dir, snap.sha, CONTEXT_CACHE_KIND, build, validate=_valid_context_entry)
+    tokens = int(value["tier1"]["tokens"])
+    return {**value["diagrams"], "repo_map_tokens": tokens}, {"tier1_tokens": tokens, "cache_hit": hit}
+
+
 def analyse_snapshot(snap: snapshot.Snapshot, me: list[str] | None = None, resume_keywords: list[str] | None = None,
                      fork_of: str | None = None, reference_corpus: str | None = None,
-                     resume_claims: list[dict] | None = None, progress=None) -> dict:
+                     resume_claims: list[dict] | None = None, progress=None, cache_dir: Path | None = None) -> dict:
     """Analyse a snapshot that is already on disk. The caller owns it, so it can be re-read (identity confirmation,
     the explain gate) without cloning again, and it stays pinned to one SHA."""
     stages = _Stages(progress)
@@ -97,6 +138,15 @@ def analyse_snapshot(snap: snapshot.Snapshot, me: list[str] | None = None, resum
     stages.done("snapshot")
     inv = inventory.scan(root)
     stages.done("inventory")
+    try:
+        diagrams, context_audit = _context_stage(snap, inv.analysed, inv.languages, cache_dir)
+        diagrams_note = None
+    except Exception:                      # nothing here may fail or change an analysis
+        diagrams = {"graph": {"nodes": [], "edges": [], "quality": "tree_only", "truncated": False},
+                    "mermaid": {"modules": "flowchart LR", "imports": "flowchart LR", "entry_flow": "flowchart LR"},
+                    "notes": [DIAGRAMS_UNAVAILABLE], "repo_map_tokens": 0}
+        context_audit, diagrams_note = {"tier1_tokens": 0, "cache_hit": False}, DIAGRAMS_UNAVAILABLE
+    stages.done("visualise")
     mine = [m.lower() for m in (me or [])]
     fork = forks.detect(root, snap.repo, snap.source, fork_of)
     upstream = fork.upstream_shas if fork.usable else None
@@ -135,6 +185,8 @@ def analyse_snapshot(snap: snapshot.Snapshot, me: list[str] | None = None, resum
         notes.append("I read " + ", ".join(non_py) + " with reduced depth (a short list of checks, not a full parse).")
     if "Jupyter" in inv.languages:
         notes.append("Notebook code counts toward line totals but I did not look for decisions inside notebooks.")
+    if diagrams_note:
+        notes.append(diagrams_note)
 
     result = {
         "student": {
@@ -165,6 +217,7 @@ def analyse_snapshot(snap: snapshot.Snapshot, me: list[str] | None = None, resum
             "questions": [q.to_dict() for q in qs],
             "supplementary_questions": extra_questions,
             "resume_links": resume_link.link(resume_claims or [], snap.repo, inv, top),
+            "diagrams": diagrams,
             "notes": notes,
         },
         "private": {
@@ -172,7 +225,7 @@ def analyse_snapshot(snap: snapshot.Snapshot, me: list[str] | None = None, resum
             "audit": {"skipped_decisions": skipped, "decisions_found_by_kind": kinds_total,
                       "decisions_set_aside_for_reference": sum(1 for d in found if d.reference_match),
                       "exclusion_reasons": inv.exclusion_reasons, "blame_share": contrib.blame_share,
-                      "additions_share": contrib.additions_share, "shallow": snap.shallow,
+                      "additions_share": contrib.additions_share, "shallow": snap.shallow, "context": context_audit,
                       "timings_s": {**stages.timings, "total": round(sum(stages.timings.values()), 3)}},
         },
     }

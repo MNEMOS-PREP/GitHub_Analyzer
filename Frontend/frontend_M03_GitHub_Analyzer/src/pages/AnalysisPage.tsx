@@ -21,6 +21,8 @@ import {
   useSecurityNotices,
 } from "../api";
 import type { Question, RepoView } from "../types";
+import { DiagramsCard } from "./DiagramsCard";
+import { PrReviewCard } from "./PrReviewCard";
 
 const DEPTH_LABEL = ["Opening", "Why", "What if", "Under pressure"];
 
@@ -102,6 +104,8 @@ function Ready({ view }: { view: RepoView }) {
         </Card>
       )}
 
+      <DiagramsCard id={view.id} ready={view.status === "ready"} />
+
       {c && <Contribution view={view} />}
 
       <Card title="Questions from your own code" meta={`${new Set(questions.map((q) => q.decision_id)).size} decisions`}>
@@ -111,6 +115,8 @@ function Ready({ view }: { view: RepoView }) {
           <QuestionLadders questions={questions} />
         )}
       </Card>
+
+      <PrReviewCard id={view.id} />
 
       {(view.notes ?? []).length > 0 && (
         <ul className="list-disc space-y-1 pl-5 text-sm text-ink-soft">

@@ -1,4 +1,4 @@
-"""Competitive-programming profiles next to the repository: Codeforces, LeetCode, CodeChef.
+"""Competitive-programming profiles next to the repository: Codeforces, LeetCode, CodeChef, HackerRank.
 
 The student links handles; we read the PUBLIC profile and turn the numbers into interview questions about the problems
 behind them. Like the rest of M03 it never gives a verdict: there is no combined coding score, `score_effect` is always
@@ -8,9 +8,10 @@ How each platform is read, most to least dependable:
   codeforces  the official public API (user.info, user.rating, user.status). Rate limit: one call per two seconds.
   leetcode    the public GraphQL endpoint the website itself uses. Not an official API, so it can change or block us.
   codechef    the public profile page, parsed tolerantly. A layout change gives "partial" or "unavailable", never a wrong number.
+  hackerrank  the public JSON the profile page itself loads (profile, badges, submission history). Not an official API.
 
 A handle is self-reported until the student proves it is theirs: they put the short code we issue into a public profile
-field (Codeforces first/last name or organisation, LeetCode "about me", CodeChef page text) and ask us to check.
+field (Codeforces first/last name or organisation, LeetCode "about me", CodeChef page text, HackerRank short bio) and ask us to check.
 Unverified data is still shown, and labelled as such.
 
 Everything that touches the network goes through one `transport` function so behaviour is testable without the sites.
@@ -31,8 +32,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable
 
-PLATFORMS = ("codeforces", "leetcode", "codechef")
-NAMES = {"codeforces": "Codeforces", "leetcode": "LeetCode", "codechef": "CodeChef"}
+PLATFORMS = ("codeforces", "leetcode", "codechef", "hackerrank")
+NAMES = {"codeforces": "Codeforces", "leetcode": "LeetCode", "codechef": "CodeChef", "hackerrank": "HackerRank"}
 HANDLE = re.compile(r"^[A-Za-z0-9_.\-]{1,40}$")
 TTL_S = 6 * 3600                       # a fresh read is reused for six hours unless the student asks again
 CF_GAP_S = 2.0                         # Codeforces allows one call per two seconds
@@ -71,6 +72,7 @@ _URL_HANDLE = {
     "codeforces": re.compile(r"codeforces\.com/profile/([^/?#\s]+)", re.I),
     "leetcode": re.compile(r"leetcode\.(?:com|cn)/(?:u/)?([^/?#\s]+)", re.I),
     "codechef": re.compile(r"codechef\.com/users/([^/?#\s]+)", re.I),
+    "hackerrank": re.compile(r"hackerrank\.com/(?:profile/)?([^/?#\s]+)", re.I),
 }
 
 
@@ -297,7 +299,54 @@ def fetch_codechef(handle: str, t: Transport, sleep=time.sleep, now: float | Non
             "profile_url": f"https://www.codechef.com/users/{urllib.parse.quote(handle)}"}
 
 
-FETCHERS = {"codeforces": fetch_codeforces, "leetcode": fetch_leetcode, "codechef": fetch_codechef}
+# ---- HackerRank -------------------------------------------------------------------------------------------------
+
+def fetch_hackerrank(handle: str, t: Transport, sleep=time.sleep, now: float | None = None) -> dict:
+    now = time.time() if now is None else now
+    q = urllib.parse.quote(handle)
+    status, _, text = t("GET", f"https://www.hackerrank.com/rest/contests/master/hackers/{q}/profile", {}, None)
+    if status == 404:
+        raise ProfileError("HackerRank has no public profile with that username.", "not_found", ["check_handle"])
+    if status != 200:
+        raise ProfileError("HackerRank is not answering requests like this right now.", "unavailable", ["retry", "continue_without_profile"])
+    try:
+        model = json.loads(text).get("model") or {}
+    except (ValueError, AttributeError):
+        model = {}
+    if not model:
+        raise ProfileError("HackerRank's page changed shape, so I could not read it.", "unavailable", ["retry", "continue_without_profile"])
+
+    def get(path: str):
+        st, _, body = t("GET", f"https://www.hackerrank.com/rest/hackers/{q}/{path}", {}, None)
+        try:
+            return json.loads(body) if st == 200 else None
+        except ValueError:
+            return None
+
+    badges_body, hist_body = get("badges"), get("submission_histories")
+    badges = badges_body.get("models") if isinstance(badges_body, dict) else None
+    hist = hist_body if isinstance(hist_body, dict) else None
+    stats: dict = {}
+    if badges is not None:
+        ps = next((b for b in badges if b.get("badge_type") == "problem-solving"), {})
+        stats.update(solved_total=int(ps.get("solved") or 0), stars=int(ps.get("stars") or 0),
+                     challenges_available=ps.get("total_challenges"), points=ps.get("current_points"), track_rank=ps.get("hacker_rank"),
+                     badges=[{"badge": b.get("badge_name", ""), "stars": int(b.get("stars") or 0), "solved": int(b.get("solved") or 0)}
+                             for b in sorted(badges, key=lambda b: -(b.get("solved") or 0)) if b.get("solved") or b.get("stars")])
+    if hist is not None:
+        counts = {d: int(c) for d, c in hist.items() if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) and isinstance(c, (int, float))}
+        year_ago = _day(now - 365 * 86400)
+        stats.update(submissions_total=sum(counts.values()), last_active=max(counts, default=None), **_activity(set(counts), now),
+                     active_days_last_year=sum(1 for d in counts if d >= year_ago),
+                     daily=[{"date": d, "submissions": counts[d]} for d in sorted(counts) if d >= year_ago])
+    if not stats:
+        raise ProfileError("HackerRank did not return anything I could read for that profile.", "unavailable", ["retry", "continue_without_profile"])
+    identity = " ".join(str(model.get(k) or "") for k in ("short_bio", "name", "jobs_headline", "website"))
+    return {"status": "ok" if badges is not None and hist is not None else "partial", "stats": stats, "identity_text": identity,
+            "profile_url": f"https://www.hackerrank.com/profile/{q}"}
+
+
+FETCHERS = {"codeforces": fetch_codeforces, "leetcode": fetch_leetcode, "codechef": fetch_codechef, "hackerrank": fetch_hackerrank}
 
 
 # ---- questions --------------------------------------------------------------------------------------------------
@@ -346,6 +395,10 @@ def questions_for(platform: str, s: dict) -> list[dict]:
         if s.get("rating"):
             out.append(_q(platform, 2, 1, f"You are rated {s['rating']} on CodeChef. What is the next kind of problem you want to be able to solve, and what are you doing to get there?",
                           "Tell me which topic you find hardest and why.", {"rating": s["rating"], "stars": s.get("stars")}))
+    elif platform == "hackerrank":
+        if s.get("solved_total"):
+            out.append(_q(platform, 1, 0, f"Your HackerRank profile shows {s['solved_total']} Problem Solving challenges solved. Pick one and walk me through how you approached it.",
+                          "Pick any challenge you solved recently and describe what it asked for.", {"solved_total": s["solved_total"], "stars": s.get("stars")}))
     return out
 
 
@@ -487,6 +540,14 @@ def insights_for(platform: str, s: dict, now: float) -> list[dict]:
             out.append(_i(platform, 1, "pattern", f"Rated {rating}" + (f" · {stars}★" if stars else ""),
                           f"Currently {gap}." + (f" {s['contests']} contests so far." if s.get("contests") else ""),
                           {"rating": rating, "max_rating": peak, "stars": stars}))
+    elif platform == "hackerrank":
+        solved, avail, stars = s.get("solved_total"), s.get("challenges_available"), s.get("stars")
+        if solved is not None:
+            share = f" of {avail}" if avail else ""
+            rank = f" Ranked {s['track_rank']:,} in that track." if s.get("track_rank") else ""
+            out.append(_i(platform, 1, "pattern", f"{solved} Problem Solving challenges solved" + (f" · {stars}★" if stars else ""),
+                          f"{solved}{share} challenges.{rank}", {"solved_total": solved, "challenges_available": avail, "stars": stars, "track_rank": s.get("track_rank")}))
+        out += _activity_insight(platform, 2, s, now)
     return out
 
 
@@ -627,6 +688,7 @@ VERIFY_WHERE = {
     "codeforces": "Add it to the Organization field on codeforces.com/settings/social, then check. You can remove it afterwards.",
     "leetcode": "Add it to 'About me' in your LeetCode profile settings, then check. You can remove it afterwards.",
     "codechef": "Add it to the 'About' section of your CodeChef profile, then check. You can remove it afterwards.",
+    "hackerrank": "Add it to the 'Bio' (short bio) in your HackerRank profile settings, then check. You can remove it afterwards.",
 }
 
 
@@ -656,12 +718,12 @@ def stats_rows(view: dict) -> list[dict]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """python -m gh_analyzer.coding_profiles --leetcode you --codeforces you --codechef you [--json out.json] [--csv out.csv]"""
+    """python -m gh_analyzer.coding_profiles --leetcode you --codeforces you --codechef you --hackerrank you [--json out.json] [--csv out.csv]"""
     import argparse
     import csv
     import sys
 
-    ap = argparse.ArgumentParser(prog="gh_analyzer.coding_profiles", description="Pull the public statistics from Codeforces, LeetCode and CodeChef")
+    ap = argparse.ArgumentParser(prog="gh_analyzer.coding_profiles", description="Pull the public statistics from Codeforces, LeetCode, CodeChef and HackerRank")
     for p in PLATFORMS:
         ap.add_argument(f"--{p}", help=f"{NAMES[p]} username or profile link")
     ap.add_argument("--json", help="write the statistics here as JSON")
@@ -669,7 +731,7 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     handles = {p: getattr(a, p) for p in PLATFORMS if getattr(a, p)}
     if not handles:
-        ap.error("give at least one of --codeforces, --leetcode, --codechef")
+        ap.error("give at least one of " + ", ".join(f"--{p}" for p in PLATFORMS))
     book = CodingProfiles()
     try:
         book.link("cli", handles)

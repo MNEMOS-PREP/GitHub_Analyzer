@@ -4,7 +4,7 @@
  * What the sites can tell us is WHEN a submission happened and what it was, never how long it took, so "time spent"
  * is shown as submissions and active days, and the page says so. Nothing here ranks or scores anyone.
  *
- * Colour: series identity uses the data-viz categorical order (Codeforces = slot 1 blue, LeetCode = slot 2 orange),
+ * Colour: series identity uses the data-viz categorical order (Codeforces = slot 1 blue, LeetCode = slot 2 orange, HackerRank = violet; not green, which means "confirmed" here),
  * validated for colour-blind separation on the shell's own light and dark panels. The platform's green and amber are
  * NOT used: on this platform they mean "confirmed" and "reported". Chrome (grid, axis, ink) uses the shell's tokens.
  * Plain SVG and HTML, so the module gains no dependency.
@@ -16,15 +16,15 @@ import { Button, Card } from "@ai/core";
 
 import type { DayCount, Platform, ProfileRow, RatingPoint } from "../types";
 
-const NAME: Record<Platform, string> = { codeforces: "Codeforces", leetcode: "LeetCode", codechef: "CodeChef" };
-const COLOUR: Partial<Record<Platform, string>> = { codeforces: "var(--viz-1)", leetcode: "var(--viz-2)" };
-const ORDER: Platform[] = ["codeforces", "leetcode"];                      // stack order, fixed: the entity keeps its colour
+const NAME: Record<Platform, string> = { codeforces: "Codeforces", leetcode: "LeetCode", codechef: "CodeChef", hackerrank: "HackerRank" };
+const COLOUR: Partial<Record<Platform, string>> = { codeforces: "var(--viz-1)", leetcode: "var(--viz-2)", hackerrank: "var(--viz-3)" };
+const ORDER: Platform[] = ["codeforces", "leetcode", "hackerrank"];                      // stack order, fixed: the entity keeps its colour
 
 /* Both palettes pass the validator on the shell's surfaces (light #ffffff, dark #142d27); see the data-viz notes. */
-const CSS = `
-.viz-root{--viz-1:#2a78d6;--viz-2:#eb6834;--viz-o1:#86b6ef;--viz-o2:#3987e5;--viz-o3:#1c5cab}
-@media (prefers-color-scheme: dark){:root:where(:not([data-theme="light"])) .viz-root{--viz-1:#3987e5;--viz-2:#d95926;--viz-o1:#1c5cab;--viz-o2:#3987e5;--viz-o3:#86b6ef}}
-:root[data-theme="dark"] .viz-root{--viz-1:#3987e5;--viz-2:#d95926;--viz-o1:#1c5cab;--viz-o2:#3987e5;--viz-o3:#86b6ef}
+export const CSS = `
+.viz-root{--viz-1:#2a78d6;--viz-2:#eb6834;--viz-3:#6250d6;--viz-o1:#86b6ef;--viz-o2:#3987e5;--viz-o3:#1c5cab}
+@media (prefers-color-scheme: dark){:root:where(:not([data-theme="light"])) .viz-root{--viz-1:#3987e5;--viz-2:#d95926;--viz-3:#9085e9;--viz-o1:#1c5cab;--viz-o2:#3987e5;--viz-o3:#86b6ef}}
+:root[data-theme="dark"] .viz-root{--viz-1:#3987e5;--viz-2:#d95926;--viz-3:#9085e9;--viz-o1:#1c5cab;--viz-o2:#3987e5;--viz-o3:#86b6ef}
 .viz-root svg text{font-family:inherit}
 `;
 
@@ -119,7 +119,7 @@ function activeDays(series: Series[], from: string, to: string): number {
 export function ProfileCharts({ rows }: { rows: ProfileRow[] }) {
   const series = useMemo(() => seriesOf(rows), [rows]);
   const lines = rows.filter((r) => (r.stats?.rating_history?.length ?? 0) > 1 && COLOUR[r.platform]);
-  const mix = rows.filter((r) => r.stats && (r.platform === "leetcode" || r.stats.solved_by_rating));
+  const mix = rows.filter((r) => r.stats && (r.platform === "leetcode" || r.stats.solved_by_rating || r.stats.badges?.length));
   if (series.length === 0 && lines.length === 0 && mix.length === 0) return null;
   return (
     <>
@@ -440,7 +440,7 @@ const BAND_ORDER = ["under 1200", "1200-1599", "1600-1999", "2000 and above"];
 
 function MixCard({ rows }: { rows: ProfileRow[] }) {
   return (
-    <Card title="Where your solves sit" meta="what you've solved, by level">
+    <Card title="Where your solves sit" meta="what you've solved, by level or track">
       <div className="viz-root space-y-6">
         {rows.map((r) => {
           const s = r.stats!;
@@ -462,6 +462,27 @@ function MixCard({ rows }: { rows: ProfileRow[] }) {
                     <li key={label} className="flex items-center gap-1.5">
                       <span aria-hidden className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: c }} />
                       {label} <span className="font-medium text-ink">{n(v)}</span> <span className="provenance">{Math.round((100 * v) / total)}%</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          }
+          if (r.platform === "hackerrank") {
+            const tracks = (s.badges ?? []).filter((b) => b.solved > 0).slice(0, 8);
+            const top = Math.max(1, ...tracks.map((b) => b.solved));
+            if (!tracks.length) return null;
+            return (
+              <div key={r.platform}>
+                <p className="text-sm font-medium text-ink">HackerRank <span className="provenance">by track</span></p>
+                <ul className="mt-2 space-y-1.5">
+                  {tracks.map((b) => (
+                    <li key={b.badge} className="flex items-center gap-3 text-sm">
+                      <span className="w-40 shrink-0 truncate text-ink-soft" title={b.badge}>{b.badge}{b.stars ? ` · ${b.stars}★` : ""}</span>
+                      <span className="h-3 flex-1 rounded bg-surface-sunken">
+                        <span className="block h-3 rounded" style={{ width: `${(100 * b.solved) / top}%`, background: "var(--viz-3)" }} />
+                      </span>
+                      <span className="w-14 text-right font-medium tabular-nums text-ink">{n(b.solved)}</span>
                     </li>
                   ))}
                 </ul>
