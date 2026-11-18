@@ -8,9 +8,12 @@ never execute (nothing in the repo runs).
 
 from __future__ import annotations
 
+import atexit
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,10 +38,21 @@ _REF_RE = re.compile(r"[A-Za-z0-9_.][A-Za-z0-9._/@^~{}-]*")
 _HEADER_RE = re.compile(r"^@@ ", re.MULTILINE)
 MAX_REF_LEN = 200
 # Placed before every subcommand so a repository's own config cannot start a program: the working tree is
-# pointed at the null device (no working-tree file is ever read, so no clean filter runs; commit reads are
-# unaffected), and there is no fsmonitor, no hook, no pager and no transport (no lazy fetch).
-_HARDEN = [f"--work-tree={os.devnull}", "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}", "-c", "protocol.allow=never",
+# pointed at an empty directory (no working-tree file is ever read, so no clean filter runs; commit reads are
+# unaffected), and there is no fsmonitor, no hook, no pager and no transport (no lazy fetch). It must be a real
+# directory: Linux git refuses the null device as a work tree ("must be run in a work tree").
+_HARDEN = ["-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}", "-c", "protocol.allow=never",
            "-c", "core.pager=cat", "-c", "core.untrackedCache=false"]
+_EMPTY_DIR: str | None = None
+
+
+def _empty_dir() -> str:
+    """One empty directory per process, created on first use and removed at exit."""
+    global _EMPTY_DIR
+    if _EMPTY_DIR is None or not os.path.isdir(_EMPTY_DIR):
+        _EMPTY_DIR = tempfile.mkdtemp(prefix="gh_empty_worktree_")
+        atexit.register(shutil.rmtree, _EMPTY_DIR, True)
+    return _EMPTY_DIR
 
 
 class GitReadError(Exception):
@@ -90,7 +104,7 @@ def read_git(root: Path, *args: str) -> str:
     # which could forge a diff line. We read bytes and decode with errors="replace". stdin is closed so a
     # program git starts can never wait on it.
     try:
-        r = subprocess.run(["git", "-C", str(root), *_HARDEN, sub, *safe, *rest], capture_output=True,
+        r = subprocess.run(["git", "-C", str(root), f"--work-tree={_empty_dir()}", *_HARDEN, sub, *safe, *rest], capture_output=True,
                            stdin=subprocess.DEVNULL, timeout=GIT_TIMEOUT_S, env=_env())
     except (subprocess.TimeoutExpired, OSError):
         raise GitReadError(f"git {sub} could not read that: it timed out or git is unavailable.") from None
